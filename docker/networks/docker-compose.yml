@@ -1,0 +1,7 @@
+version: "3.7"
+
+networks:
+  infrastructure:
+    name: ${NETWORK_PREFIX_INFRASTRUCTURE}infrastructure
+  frontend:
+    name: ${NETWORK_PREFIX_FRONTEND}frontend

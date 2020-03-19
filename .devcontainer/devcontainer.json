@@ -1,0 +1,14 @@
+{
+  "image": "josephcopenhaver/discord-bot-shell:latest",
+  "workspaceMount": "source=${localWorkspaceFolder},target=/workspace,type=bind,consistency=delegated",
+  "workspaceFolder": "/workspace",
+  "runArgs": ["--env-file", "${localWorkspaceFolder}/.devcontainer/env"],
+  "mounts": [
+    "source=${localWorkspaceFolder}/.devcontainer/extensions-cache,target=/root/.vscode-server/extensions,type=bind,consistency=delegated"
+  ],
+  "extensions": [
+    "ms-azuretools.vscode-docker",
+    "ms-vscode.go",
+    "editorconfig.editorconfig"
+  ]
+}

@@ -1,0 +1,3 @@
+/.docker-volumes
+/.devcontainer/extensions-cache
+!/.devcontainer/extensions-cache/.gitkeep
