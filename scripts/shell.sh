@@ -14,6 +14,17 @@ COMPOSE_FILES+=("$PWD/docker/shell/docker-compose.yml")
 
 export COMPOSE_FILE="$(join_by : "${COMPOSE_FILES[@]}")"
 
+if [[ ! -s .devcontainer/cache/bash_history ]]; then
+    touch .devcontainer/cache/bash_history
+fi
+
+if [[ ! -s .devcontainer/cache/bashrc.local ]]; then
+    cat <<'EOF' > .devcontainer/cache/bashrc.local
+export PS1='`printf "%02X" $?`:\w `git branch 2> /dev/null | grep -E "^[*]" | sed -E "s/^\* +([^ ]+) *$/(\1) /"`\$ '
+EOF
+
+fi
+
 set -x
 
 if [ "$BUILD" == "y" ]; then

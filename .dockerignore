@@ -1,2 +1,2 @@
 ./.docker-volumes
-./.devcontainer/extensions-cache
+./.devcontainer/cache

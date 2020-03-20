@@ -1,3 +1,8 @@
+# application mounts
 /.docker-volumes
-/.devcontainer/extensions-cache
-!/.devcontainer/extensions-cache/.gitkeep
+# ide cache mounts
+/.devcontainer/cache
+# ide cache extensions mount
+!/.devcontainer/cache/extensions/.gitkeep
+# ide cache program/runtime mounts
+!/.devcontainer/cache/go/.gitkeep

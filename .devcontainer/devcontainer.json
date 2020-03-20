@@ -2,9 +2,35 @@
   "image": "josephcopenhaver/discord-bot-shell:latest",
   "workspaceMount": "source=${localWorkspaceFolder},target=/workspace,type=bind,consistency=delegated",
   "workspaceFolder": "/workspace",
-  "runArgs": ["--env-file", "${localWorkspaceFolder}/.devcontainer/env"],
+  "runArgs": [
+    "--network",
+    "infrastructure",
+    "-e",
+    "AWS_ACCESS_KEY_ID",
+    "-e",
+    "AWS_SECRET_ACCESS_KEY",
+    "-e",
+    "AWS_DEFAULT_REGION",
+    "-e",
+    "AWS_REGION",
+    "-e",
+    "AWS_DEFAULT_OUTPUT",
+    "-e",
+    "AWS_PROFILE",
+    "-e",
+    "AWS_SDK_LOAD_CONFIG",
+    "--name",
+    "josephcopenhaver--discord-bot--shell",
+    "--env-file",
+    "${localWorkspaceFolder}/.devcontainer/env"
+  ],
   "mounts": [
-    "source=${localWorkspaceFolder}/.devcontainer/extensions-cache,target=/root/.vscode-server/extensions,type=bind,consistency=delegated"
+    "source=${localWorkspaceFolder}/.devcontainer/cache/extensions,target=/root/.vscode-server/extensions,type=bind,consistency=delegated",
+    "source=${localEnv:HOME}/.aws,target=/root/.aws,type=bind,consistency=delegated",
+    "source=${localEnv:HOME}/.ssh,target=/root/.ssh,type=bind,readonly,consistency=delegated",
+    "source=${localWorkspaceFolder}/.devcontainer/cache/go,target=/go,type=bind,consistency=delegated",
+    "source=${localWorkspaceFolder}/.devcontainer/cache/bashrc.local,target=/root/.bashrc.local,type=bind,consistency=delegated",
+    "source=${localWorkspaceFolder}/.devcontainer/cache/bash_history,target=/root/.bash_history,type=bind,consistency=delegated"
   ],
   "extensions": [
     "ms-azuretools.vscode-docker",

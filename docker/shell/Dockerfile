@@ -2,6 +2,19 @@ ARG DOCKER_GO_VERSION=1.14.0-buster
 
 FROM golang:${DOCKER_GO_VERSION}
 
+# setup locales for tools that require them ( tmate specifically, probably more )
+RUN export DEBIAN_FRONTEND=noninteractive \
+    && apt-get update \
+    && apt-get install -y locales \
+    && sed -i -e 's/# en_US.UTF-8 UTF-8/en_US.UTF-8 UTF-8/' /etc/locale.gen \
+    && locale-gen
+
+# ensure utf8 locale env variables are set
+ENV LANG=en_US.UTF-8 \
+    LANGUAGE=en_US:en \
+    LC_ALL=en_US.UTF-8
+
+# install system packages
 RUN export DEBIAN_FRONTEND=noninteractive \
     && apt-get update \
     && apt-get install -y \
@@ -32,6 +45,7 @@ RUN export DEBIAN_FRONTEND=noninteractive \
     && rm -rf /var/lib/apt/lists/* \
     && true
 
+# install python packages
 RUN export DEBIAN_FRONTEND=noninteractive \
     && apt-get update \
     && apt-get install -y \
@@ -45,4 +59,11 @@ RUN export DEBIAN_FRONTEND=noninteractive \
     yq \
     && true
 
+# setup bash completions
+RUN test -f /usr/share/bash-completion/bash_completion \
+    && echo 'source /usr/share/bash-completion/bash_completion' >> /root/.bashrc \
+    && echo 'test -f $HOME/.bashrc.local && source $HOME/.bashrc.local' >> /root/.bashrc \
+    && true
+
+# specify a working default working directory
 WORKDIR /workspace

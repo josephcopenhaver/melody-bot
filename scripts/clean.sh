@@ -8,6 +8,9 @@ COMPOSE_IGNORE_ORPHANS="false"
 
 export COMPOSE_FILE="$(find "$PWD/docker" -maxdepth 2 -name docker-compose.yml | tr '\n' ':' | sed -E 's/:+$//')"
 
+# remove any attached vscode dev-container
+docker rm -f josephcopenhaver--discord-bot--shell || true
+
 docker-compose down
 
 rm -rf .docker-volumes
