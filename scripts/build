@@ -1,0 +1,14 @@
+#!/bin/bash
+
+set -euo pipefail
+
+VERSION="$(head -1 version.txt)"
+GIT_SHA="$(git log --pretty=format:'%H' -n 1)"
+
+mkdir -p build/bin
+
+set -x
+go build \
+    -o build/bin/ \
+    -ldflags "-X main.GitSHA=${GIT_SHA} -X main.Version=${VERSION}" \
+    ./cmd/...

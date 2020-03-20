@@ -19,6 +19,8 @@
     "AWS_PROFILE",
     "-e",
     "AWS_SDK_LOAD_CONFIG",
+    "-e",
+    "IN_DOCKER_CONTAINER=true",
     "--name",
     "josephcopenhaver--discord-bot--shell",
     "--env-file",

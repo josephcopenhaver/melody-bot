@@ -6,3 +6,5 @@
 !/.devcontainer/cache/extensions/.gitkeep
 # ide cache program/runtime mounts
 !/.devcontainer/cache/go/.gitkeep
+# build artifacts location
+/build
