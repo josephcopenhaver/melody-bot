@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-if [[ ! -s .devcontainer/cache/bash_history ]]; then
+if [[ ! -f .devcontainer/cache/bash_history ]]; then
     touch .devcontainer/cache/bash_history
 fi
 

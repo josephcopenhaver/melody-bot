@@ -1,3 +1,5 @@
+# language dependencies
+/vendor
 # application mounts
 /.docker-volumes
 # ide cache mounts
@@ -8,3 +10,6 @@
 !/.devcontainer/cache/go/.gitkeep
 # build artifacts location
 /build
+# prevent secrets from getting commited
+/secret
+/secrets
