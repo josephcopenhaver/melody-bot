@@ -19,9 +19,14 @@ COMPOSE_IGNORE_ORPHANS="false"
 
 export COMPOSE_FILE="$(find "$PWD/docker" -maxdepth 2 -name docker-compose.yml | tr '\n' ':' | sed -E 's/:+$//')"
 
-# remove any attached vscode dev-container
-docker rm -f josephcopenhaver--discord-bot--shell || true
+# remove any container attached to docker-compose networks
+docker ps --filter "network=${NETWORK_PREFIX_INFRASTRUCTURE}infrastructure" --filter "network=${NETWORK_PREFIX_FRONTEND}frontend" --format '{{.ID}}' | \
+    while read -r id; do
+        docker stop "$id" || true
+        docker rm "$id" || true
+    done
 
+# ensure everything is torn down
 docker-compose down
 
 rm -rf .docker-volumes
