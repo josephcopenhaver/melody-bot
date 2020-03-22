@@ -9,6 +9,7 @@ fi
 before_sum_sig="$(shasum go.sum)"
 before_mod_sig="$(shasum go.mod)"
 
+go mod vendor
 ./scripts/build
 
 after_sum_sig="$(shasum go.sum)"

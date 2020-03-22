@@ -1,1 +1,12 @@
 version: "3.7"
+
+services:
+  discord-bot:
+    build:
+      context: $PWD
+      dockerfile: $PWD/docker/default/Dockerfile
+    env_file:
+      - $PWD/secrets/$ENV.env
+    networks:
+      - infrastructure
+      - frontend
