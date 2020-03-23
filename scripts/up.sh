@@ -1,17 +1,14 @@
 #!/bin/bash
 
-if [ -n "$IN_DOCKER_CONTAINER" ]; then
+if [ "$IN_DOCKER_CONTAINER" == "y" ]; then
     echo "cannot run within a docker container"
     exit 1
 fi
 
 set -eo pipefail
 
-function join_by { local IFS="$1"; shift; echo "$*"; }
-
-COMPOSE_PROJECT_NAME="josephcopenhaver-discord-bot"
-COMPOSE_IGNORE_ORPHANS="false"
-COMPOSE_FILES=()
+source ./scripts/source/functions.sh
+source ./scripts/source/vars.sh
 
 COMPOSE_FILES+=("$PWD/docker/networks/docker-compose.yml")
 COMPOSE_FILES+=("$PWD/docker/default/docker-compose.yml")

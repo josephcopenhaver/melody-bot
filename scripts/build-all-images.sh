@@ -3,13 +3,8 @@ set -eo pipefail
 
 BUILD="${BUILD:-${ONLY_BUILD:-n}}"
 
-function join_by { local IFS="$1"; shift; echo "$*"; }
-
-export NETWORK_PREFIX_INFRASTRUCTURE=""
-export NETWORK_PREFIX_FRONTEND=""
-COMPOSE_PROJECT_NAME="josephcopenhaver-discord-bot"
-COMPOSE_IGNORE_ORPHANS="false"
-COMPOSE_FILES=()
+source ./scripts/source/functions.sh
+source ./scripts/source/vars.sh
 
 COMPOSE_FILES+=("$PWD/docker/networks/docker-compose.yml")
 

@@ -3,17 +3,14 @@ set -eo pipefail
 
 NETWORK="${NETWORK:-infrastructure}"
 
+source ./scripts/source/functions.sh
+source ./scripts/source/vars.sh
+
 if [ "$NETWORK" == "infrastructure" ]; then
     NETWORK="${NETWORK_PREFIX_INFRASTRUCTURE}infrastructure"
 elif [ "$NETWORK" == "frontend" ]; then
     NETWORK="${NETWORK_PREFIX_FRONTEND}frontend"
 fi
-
-function join_by { local IFS="$1"; shift; echo "$*"; }
-
-COMPOSE_PROJECT_NAME="josephcopenhaver-discord-bot"
-COMPOSE_IGNORE_ORPHANS="false"
-COMPOSE_FILES=()
 
 COMPOSE_FILES+=("$PWD/docker/networks/docker-compose.yml")
 COMPOSE_FILES+=("$PWD/docker/shell/docker-compose.yml")

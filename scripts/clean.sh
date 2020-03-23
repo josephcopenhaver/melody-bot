@@ -6,11 +6,13 @@ rm -rf build
 
 # if in a container, short circuit
 
-if [ -n "${IN_DOCKER_CONTAINER}" ]; then
+if [ "$IN_DOCKER_CONTAINER" == "y" ]; then
     exit 0
 fi
 
 REMOVE_VOLUMES=y ./scripts/down.sh
+
+set -x
 
 rm -rf .docker-volumes
 mkdir -p .docker-volumes
