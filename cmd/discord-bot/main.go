@@ -3,10 +3,10 @@ package main
 import (
 	"os"
 
-	"github.com/josephcopenhaver/discord-bot/internal/discord-bot/config"
-	"github.com/josephcopenhaver/discord-bot/internal/discord-bot/logging"
-	"github.com/josephcopenhaver/discord-bot/internal/discord-bot/server"
-	"github.com/josephcopenhaver/discord-bot/internal/discord-bot/serviceinfo"
+	"github.com/josephcopenhaver/discord-bot/internal/logging"
+	"github.com/josephcopenhaver/discord-bot/internal/service"
+	"github.com/josephcopenhaver/discord-bot/internal/service/config"
+	"github.com/josephcopenhaver/discord-bot/internal/service/server"
 	"github.com/rs/zerolog/log"
 )
 
@@ -23,11 +23,14 @@ func main() {
 		}
 	}
 
-	serviceinfo.Version = Version
-	serviceinfo.Commit = GitSHA
-	serviceinfo.StartupMessage()
+	service.Version = Version
+	service.Commit = GitSHA
+	log.Info().
+		Str("Version", service.Version).
+		Str("Commit", service.Commit).
+		Msg("starting discord-bot")
 
-	conf, err := config.NewConfig()
+	conf, err := config.New()
 	if err != nil {
 		log.Fatal().
 			Err(err).

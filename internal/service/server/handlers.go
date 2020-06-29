@@ -2,7 +2,7 @@ package server
 
 import (
 	"github.com/bwmarrin/discordgo"
-	"github.com/josephcopenhaver/discord-bot/internal/discord-bot/handlers"
+	"github.com/josephcopenhaver/discord-bot/internal/service/handlers"
 	"github.com/rs/zerolog/log"
 )
 

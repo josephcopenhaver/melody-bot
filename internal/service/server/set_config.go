@@ -3,7 +3,7 @@ package server
 import (
 	"github.com/bwmarrin/discordgo"
 	validation "github.com/go-ozzo/ozzo-validation/v4"
-	"github.com/josephcopenhaver/discord-bot/internal/discord-bot/config"
+	"github.com/josephcopenhaver/discord-bot/internal/service/config"
 )
 
 func (s *Server) SetConfig(conf *config.Config) error {

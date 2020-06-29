@@ -13,3 +13,4 @@
 # prevent secrets from getting commited
 /secret
 /secrets
+/.bin

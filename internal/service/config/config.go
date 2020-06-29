@@ -16,7 +16,7 @@ func (c *Config) Validate() error {
 	)
 }
 
-func NewConfig() (*Config, error) {
+func New() (*Config, error) {
 	conf := &Config{}
 
 	if err := envconfig.Process("", conf); err != nil {
