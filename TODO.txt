@@ -1,0 +1,8 @@
+1. volume normalization ( a little on the loud side, just like https://github.com/Just-Some-Bots/MusicBot/commit/0659da8c60880840bd767a96a893ec1ecc603076 )
+2. be able to play a video from youtube
+3. document required bot permissions: https://discordpy.readthedocs.io/en/latest/discord.html here https://discord.com/developers/applications
+4. document an easy way for users to create their own bot: heroku app?
+5. auto join the voice channel a guild member is in when they ask you to play a file?
+6. encode to discord friendly 8bit opus format
+7. add a way to print the current playlist
+8. on track change, broadcast a message to a text channel as to what is playing and what is coming next

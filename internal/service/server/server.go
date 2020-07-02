@@ -6,6 +6,7 @@ import (
 	"syscall"
 
 	"github.com/bwmarrin/discordgo"
+	"github.com/josephcopenhaver/discord-bot/internal/service"
 	"github.com/rs/zerolog/log"
 )
 
@@ -16,6 +17,7 @@ type EventHandlers struct {
 type Server struct {
 	DiscordSession *discordgo.Session
 	EventHandlers  EventHandlers
+	Brain          *service.Brain
 }
 
 func New() *Server {
@@ -23,6 +25,7 @@ func New() *Server {
 		EventHandlers: EventHandlers{
 			MessageCreate: []HandleMessageCreate{},
 		},
+		Brain: service.NewBrain(),
 	}
 }
 

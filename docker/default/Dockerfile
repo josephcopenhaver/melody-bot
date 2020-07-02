@@ -24,6 +24,17 @@ RUN export DEBIAN_FRONTEND=noninteractive \
     netcat \
     && true
 
+# install runtime required packages
+RUN export DEBIAN_FRONTEND=noninteractive \
+    && apt-get update \
+    && apt-get install -y \
+    libopus-dev \
+    libopusfile-dev \
+    python3-pip \
+    opus-tools \
+    ffmpeg \
+    && pip3 install ffmpeg-normalize==1.19.1
+
 COPY --from=0 /workspace/build/bin/ ./build/bin/
 
 ENV LOG_FORMAT=json

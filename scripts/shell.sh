@@ -19,6 +19,8 @@ export COMPOSE_FILE="$(join_by : "${COMPOSE_FILES[@]}")"
 
 ./scripts/networks.sh
 
+mkdir -p "$HOME/.aws/cli/cache"
+
 set -x
 
 if [ "${ONLY_BUILD:-n}" == "y" ]; then
@@ -42,7 +44,11 @@ docker run \
     -e AWS_SDK_LOAD_CONFIG \
     -e IN_DOCKER_CONTAINER=true \
     \
-    -v "$HOME/.aws:/root/.aws" \
+    -w "/workspace" \
+    \
+    -v "$PWD:/workspace" \
+    -v "$HOME/.aws:/root/.aws:ro" \
+    -v "$HOME/.aws/cli/cache:/root/.aws/cli/cache:rw" \
     -v "$HOME/.ssh:/root/.ssh:ro" \
     -v "$PWD/.devcontainer/cache/go:/go" \
     -v "$PWD/.devcontainer/cache/bashrc.local:/root/.bashrc.local" \

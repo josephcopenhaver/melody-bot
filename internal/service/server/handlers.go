@@ -2,6 +2,7 @@ package server
 
 import (
 	"github.com/bwmarrin/discordgo"
+	"github.com/josephcopenhaver/discord-bot/internal/service"
 	"github.com/josephcopenhaver/discord-bot/internal/service/handlers"
 	"github.com/rs/zerolog/log"
 )
@@ -12,15 +13,33 @@ func (s *Server) Handlers() error {
 
 	s.AddHandler("ping", handlers.Ping)
 
+	s.AddHandler("join-channel", handlers.JoinChannel)
+
+	s.AddHandler("reset", handlers.Reset)
+
+	s.AddHandler("play", handlers.Play)
+
+	s.AddHandler("resume", handlers.Resume) // also alias for play ( without args )
+
+	s.AddHandler("pause", handlers.Pause)
+
+	s.AddHandler("stop", handlers.Stop)
+
+	s.AddHandler("repeat", handlers.Repeat)
+
+	s.AddHandler("next", handlers.Next) // also alias for skip
+
+	s.AddHandler("previous", handlers.Previous) // also alias for prev
+
 	return nil
 }
 
 type HandleMessageCreate struct {
 	Name    string
-	Handler func(*discordgo.Session, *discordgo.MessageCreate, *bool) error
+	Handler func(*discordgo.Session, *discordgo.MessageCreate, *service.Player, *bool) error
 }
 
-func newHandleMessageCreate(name string, handler func(*discordgo.Session, *discordgo.MessageCreate, *bool) error) HandleMessageCreate {
+func newHandleMessageCreate(name string, handler func(*discordgo.Session, *discordgo.MessageCreate, *service.Player, *bool) error) HandleMessageCreate {
 	return HandleMessageCreate{
 		Name:    name,
 		Handler: handler,
@@ -36,21 +55,57 @@ func (srv *Server) addMuxHandlers() {
 			return
 		}
 
+		p := srv.Brain.Player(m.GuildID)
+
 		for i := range srv.EventHandlers.MessageCreate {
+
 			h := &srv.EventHandlers.MessageCreate[i]
-			err := h.Handler(s, m, &handled)
+
+			err := h.Handler(s, m, p, &handled)
 			if err != nil {
-				log.Error().
-					Err(err).
+				log.Err(err).
 					Str("handler_name", h.Name).
-					Interface("author", m.Author).
-					Interface("message", m.Message).
+					Str("author_id", m.Author.ID).
+					Str("author_username", m.Author.Username).
+					Str("message_content", m.Message.Content).
+					Interface("message_id", m.Message.ID).
+					Interface("message_timestamp", m.Message.Timestamp).
 					Msg("error in handler")
+
+				_, err := s.ChannelMessageSend(m.ChannelID, "error: "+err.Error())
+				if err != nil {
+					log.Err(err).
+						Msg("failed to send error reply")
+				}
+				return
 			}
 
 			if handled {
-				break
+				log.Warn().
+					Str("handler_name", h.Name).
+					Str("author_id", m.Author.ID).
+					Str("author_username", m.Author.Username).
+					Str("message_content", m.Message.Content).
+					Interface("message_id", m.Message.ID).
+					Interface("message_timestamp", m.Message.Timestamp).
+					Msg("handled message")
+				return
 			}
+		}
+
+		log.Info().
+			Str("author_id", m.Author.ID).
+			Str("author_username", m.Author.Username).
+			Str("message_content", m.Message.Content).
+			Interface("message_id", m.Message.ID).
+			Interface("message_timestamp", m.Message.Timestamp).
+			Msg("unhandled message")
+
+		_, err := s.ChannelMessageSend(m.ChannelID, "command not recognized")
+		if err != nil {
+			log.Error().
+				Err(err).
+				Msg("failed to send default reply")
 		}
 	})
 }
@@ -58,6 +113,11 @@ func (srv *Server) addMuxHandlers() {
 func (s *Server) AddHandler(name string, handler interface{}) {
 	switch h := handler.(type) {
 	case func(*discordgo.Session, *discordgo.MessageCreate, *bool) error:
+		w := func(s *discordgo.Session, m *discordgo.MessageCreate, p *service.Player, handled *bool) error {
+			return h(s, m, handled)
+		}
+		s.EventHandlers.MessageCreate = append(s.EventHandlers.MessageCreate, newHandleMessageCreate(name, w))
+	case func(*discordgo.Session, *discordgo.MessageCreate, *service.Player, *bool) error:
 		s.EventHandlers.MessageCreate = append(s.EventHandlers.MessageCreate, newHandleMessageCreate(name, h))
 	default:
 		log.Fatal().
