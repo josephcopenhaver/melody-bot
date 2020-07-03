@@ -47,7 +47,7 @@ func NewOpusWriter(f io.Writer) (*OpusWriter, error) {
 	}
 
 	return &OpusWriter{
-		f:             bufio.NewWriterSize(bufio.NewWriter(f), SampleMaxBytes+NumBytesForOpusPacketLength),
+		f:             bufio.NewWriterSize(bufio.NewWriter(f), 2*(SampleMaxBytes+NumBytesForOpusPacketLength)),
 		packetSizeBuf: make([]byte, binary.Size(uint64(0))),
 		packetBuf:     make([]byte, SampleMaxBytes),
 		opusEncoder:   opusEncoder,
@@ -92,7 +92,7 @@ type OpusReader struct {
 
 func NewOpusReader(f io.Reader) *OpusReader {
 	return &OpusReader{
-		f:             bufio.NewReaderSize(bufio.NewReader(f), SampleMaxBytes+NumBytesForOpusPacketLength),
+		f:             bufio.NewReaderSize(bufio.NewReader(f), NumPacketBuffers*(SampleMaxBytes+NumBytesForOpusPacketLength)),
 		packetSizeBuf: make([]byte, binary.Size(uint64(0))),
 	}
 }
