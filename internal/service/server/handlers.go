@@ -33,6 +33,8 @@ func (s *Server) Handlers() error {
 
 	s.AddHandler("restart-track", handlers.RestartTrack)
 
+	s.AddHandler("clear-playlist", handlers.ClearPlaylist)
+
 	return nil
 }
 
