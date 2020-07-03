@@ -95,7 +95,8 @@ func (m *PlayerMemory) reset() {
 	}
 
 	*m = PlayerMemory{
-		playRequests: m.playRequests,
+		playRequests:    m.playRequests,
+		currentTrackIdx: -1,
 	}
 }
 
@@ -156,27 +157,28 @@ func NewPlayer(guildId string) *Player {
 	playRequests := make(chan *playRequest, 1)
 
 	p.memory.Store(PlayerMemory{
-		playRequests: playRequests,
+		playRequests:    playRequests,
+		currentTrackIdx: -1,
 	})
 	go playerWorker(p, guildId, p.signalChan)
 
 	return p
 }
 
-// setNextTrackIndex returns true if index is in playlist range
-func (p *Player) setNextTrackIndex(idx int) bool {
-	var result bool
+// // setNextTrackIndex returns true if index is in playlist range
+// func (p *Player) setNextTrackIndex(idx int) bool {
+// 	var result bool
 
-	p.withMemory(func(m *PlayerMemory) {
+// 	p.withMemory(func(m *PlayerMemory) {
 
-		if idx >= 0 && idx < len(m.tracks) {
-			result = true
-			m.currentTrackIdx = idx - 1
-		}
-	})
+// 		if idx >= 0 && idx < len(m.tracks) {
+// 			result = true
+// 			m.currentTrackIdx = idx - 1
+// 		}
+// 	})
 
-	return result
-}
+// 	return result
+// }
 
 func (p *Player) nextTrack() *track {
 	var result *track
@@ -429,31 +431,33 @@ func playerMainLoop(p *Player, statePtr *State, debug func() *zerolog.Event, sig
 
 	switch *statePtr {
 	case StateDefault:
+		// signal trap 1/4:
+		// type: blocking
+		// signals recognized when in initial state
 		s := <-sigChan
 
 		debug().Msg("player: got signal before playing track")
 
 		switch s {
 		case SignalNewVoiceConnection:
-			sendChan = p.sendChannel(debug)
+			sendChan = nil
 		case SignalPlay:
 			p.withMemory(func(m *PlayerMemory) {
 				m.play(*statePtr)
 			})
 			*statePtr = StatePlaying
-		case SignalResume:
-			if p.setNextTrackIndex(0) {
-				*statePtr = StatePlaying
-			}
 		}
 	case StateIdle:
+		// signal trap 2/4:
+		// type: blocking
+		// signals recognized when in idle state ( stopped or partially errored )
 		s := <-sigChan
 
 		debug().Msg("player: got signal before playing track")
 
 		switch s {
 		case SignalNewVoiceConnection:
-			sendChan = p.sendChannel(debug)
+			sendChan = nil
 		case SignalPlay:
 			p.withMemory(func(m *PlayerMemory) {
 				m.play(*statePtr)
@@ -523,6 +527,9 @@ BroadcastTrackLoop:
 		// debug().Msg("player: broadcast loop start: signal check")
 
 		select {
+		// signal trap 3/4:
+		// type: non-blocking
+		// signals recognized when in playing state
 		case s := <-sigChan:
 			switch s {
 			case SignalNewVoiceConnection:
@@ -554,13 +561,13 @@ BroadcastTrackLoop:
 				*statePtr = StatePaused
 			PausedLoop:
 				for {
+					// signal trap 4/4:
+					// type: blocking
+					// signals recognized when in paused state
 					s := <-sigChan
 					switch s {
 					case SignalNewVoiceConnection:
-						sendChan = p.sendChannel(debug)
-						if sendChan == nil {
-							return nil
-						}
+						sendChan = nil
 					case SignalPlay:
 						p.withMemory(func(m *PlayerMemory) {
 							m.play(*statePtr)
@@ -578,13 +585,24 @@ BroadcastTrackLoop:
 						break BroadcastTrackLoop
 					case SignalRestartTrack:
 						p.restartTrack()
+						*statePtr = StateIdle
 						break BroadcastTrackLoop
 					case SignalReset:
-						*statePtr = StateIdle
 						p.reset()
+						*statePtr = StateIdle
 						break BroadcastTrackLoop
 					case SignalResume:
+						*statePtr = StatePlaying
 						break PausedLoop
+					}
+				}
+
+				// rediscover the channel we need to send on
+				// if it was altered while paused
+				if sendChan == nil {
+					sendChan = p.sendChannel(debug)
+					if sendChan == nil {
+						return nil
 					}
 				}
 			}
