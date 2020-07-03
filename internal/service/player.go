@@ -12,6 +12,10 @@ import (
 	"github.com/bwmarrin/discordgo"
 )
 
+const (
+	NumPacketBuffers = 4 // should always be 2 greater than the OpusSend channel packet size to ensure no buffer lag occurs and no corruption occurs, this also avoids allocations and reduces CPU burn
+)
+
 // Signal: a command that can be send to the player
 type Signal int8
 

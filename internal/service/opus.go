@@ -11,11 +11,10 @@ import (
 
 // transcoding constants
 const (
-	SampleRate       = 48000 // kits per second
-	NumChannels      = 1
-	SampleSize       = 960 // int16 size of each audio frame
-	SampleMaxBytes   = SampleSize * 2 * NumChannels
-	NumPacketBuffers = 4 // should always be 2 greater than the OpusSend channel packet size to ensure no buffer lag occurs and no corruption occurs, this also avoids allocations and reduces CPU burn
+	SampleRate     = 48000 // kits per second
+	NumChannels    = 1
+	SampleSize     = 960 // int16 size of each audio frame
+	SampleMaxBytes = SampleSize * 2 * NumChannels
 )
 
 var NumBytesForOpusPacketLength int
