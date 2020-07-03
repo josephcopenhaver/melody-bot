@@ -31,6 +31,8 @@ func (s *Server) Handlers() error {
 
 	s.AddHandler("previous", handlers.Previous) // also alias for prev
 
+	s.AddHandler("restart-track", handlers.RestartTrack)
+
 	return nil
 }
 

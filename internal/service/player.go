@@ -37,6 +37,7 @@ const (
 	SignalReset
 	SignalNext
 	SignalPrevious
+	SignalRestartTrack
 	//
 	SignalUnusedUpper
 )
@@ -50,6 +51,7 @@ func (s Signal) String() string {
 		"reset",
 		"next",
 		"previous",
+		"restart-track",
 	}[int(s)]
 }
 
@@ -183,17 +185,6 @@ func (p *Player) setNextTrackIndex(idx int) bool {
 			result = true
 			m.currentTrackIdx = idx - 1
 		}
-	})
-
-	return result
-}
-
-func (p *Player) voiceConnection() *discordgo.VoiceConnection {
-	var result *discordgo.VoiceConnection
-
-	p.withMemory(func(m *PlayerMemory) {
-
-		result = m.voiceConnection
 	})
 
 	return result
@@ -370,6 +361,44 @@ func (p *Player) ClearPlaylist() {
 	})
 }
 
+func (p *Player) RestartTrack() {
+
+	p.signalChan <- SignalRestartTrack
+}
+
+func (p *Player) sendChannel(debug func() *zerolog.Event) chan []byte {
+	var c *discordgo.VoiceConnection
+	var result chan []byte
+
+	p.withMemory(func(m *PlayerMemory) {
+		c = m.voiceConnection
+	})
+
+	if c == nil {
+		// TODO: send message to text channel
+		debug().Msg("no active voice channel")
+		return result
+	}
+
+	c.Lock()
+	defer c.Unlock()
+
+	if !c.Ready {
+		// TODO: send message to text channel
+		debug().Msg("voice channel not ready")
+		return result
+	}
+
+	result = c.OpusSend
+
+	if result == nil {
+		// TODO: send message to text channel
+		debug().Msg("voice channel has invalid sending channel")
+	}
+
+	return result
+}
+
 func playerWorker(p *Player, guildId string, sigChan <-chan Signal) {
 
 	state := StateDefault
@@ -397,12 +426,15 @@ func playerWorker(p *Player, guildId string, sigChan <-chan Signal) {
 						Msg("player: recovered from panic")
 				}
 			}()
-			playerMainLoop(p, &state, debug, sigChan)
+			err := playerMainLoop(p, &state, debug, sigChan)
+			if err != nil {
+				log.Err(err).Msg("player: error occured during playback")
+			}
 		}()
 	}
 }
 
-func playerMainLoop(p *Player, statePtr *State, debug func() *zerolog.Event, sigChan <-chan Signal) {
+func playerMainLoop(p *Player, statePtr *State, debug func() *zerolog.Event, sigChan <-chan Signal) error {
 
 	debug().Msg("player: main loop start")
 
@@ -455,144 +487,141 @@ func playerMainLoop(p *Player, statePtr *State, debug func() *zerolog.Event, sig
 
 		debug().Msg("player: not playing")
 
-		return
+		return nil
 	}
 
 	// TODO: if channel changes, then send pause + unpause signals ( if not currently paused )
 	// to re-grab the voice channel
 
-	// before playing the record again
-	// sync-read the channel id
-	c := p.voiceConnection()
-	if c == nil {
-		// TODO: log message
-		panic("no voice connection")
+	sendChan := p.sendChannel(debug)
+	if sendChan == nil {
+		return nil
 	}
 
-	err := func() error {
+	track := p.nextTrack()
+	if track == nil {
+		*statePtr = StateIdle
+		return nil
+	}
 
-		track := p.nextTrack()
-		if track == nil {
-			*statePtr = StateIdle
-			return nil
-		}
+	f, err := os.Open(track.audioFile)
+	if err != nil {
+		return fmt.Errorf("failed to open audio file: %s: %v", track.audioFile, err)
+	}
+	defer f.Close()
 
-		f, err := os.Open(track.audioFile)
+	// TODO: transcode on play handler
+	// lightly transcode formats on the fly and send data packets to discord
+	{
+		opusEncoder, err := gopus.NewEncoder(SampleRate, NumChannels, gopus.Audio)
 		if err != nil {
-			return fmt.Errorf("failed to open audio file: %s: %v", track.audioFile, err)
+			return fmt.Errorf("faied to create opus encoder: %v", err)
 		}
-		defer f.Close()
 
-		// TODO: transcode on play handler
-		// lightly transcode formats on the fly and send data packets to discord
-		{
-			opusEncoder, err := gopus.NewEncoder(SampleRate, NumChannels, gopus.Audio)
-			if err != nil {
-				return fmt.Errorf("faied to create opus encoder: %v", err)
-			}
+		inBufArray := [SampleSize * NumChannels]int16{}
+		outPackets := [NumPacketBuffers][SampleMaxBytes]byte{}
+		outPacketIdx := 0
 
-			inBufArray := [SampleSize * NumChannels]int16{}
-			outPackets := [NumPacketBuffers][SampleMaxBytes]byte{}
-			outPacketIdx := 0
+		inBuf := inBufArray[:]
 
-			inBuf := inBufArray[:]
+	BroadcastTrackLoop:
+		for {
 
-		BroadcastTrackLoop:
-			for {
+			noSignal := false
 
-				noSignal := false
-
-				select {
-				case s := <-sigChan:
-					switch s {
-					case SignalPlay:
-						p.withMemory(func(m *PlayerMemory) {
-							m.play(statePtr)
-						})
-					case SignalPrevious:
-						p.previousTrack(statePtr)
-						break BroadcastTrackLoop
-					case SignalStop:
-						p.restartTrack()
-						*statePtr = StateIdle
-						break BroadcastTrackLoop
-					case SignalReset:
-						p.reset()
-						*statePtr = StateIdle
-						break BroadcastTrackLoop
-					case SignalNext:
-						break BroadcastTrackLoop
-					case SignalPause:
-						*statePtr = StatePaused
-					PausedLoop:
-						for {
-							s := <-sigChan
-							switch s {
-							case SignalPlay:
-								p.withMemory(func(m *PlayerMemory) {
-									m.play(statePtr)
-								})
-							case SignalPrevious:
-								p.previousTrack(statePtr)
-								*statePtr = StateIdle
-								break BroadcastTrackLoop
-							case SignalNext:
-								*statePtr = StateIdle
-								break BroadcastTrackLoop
-							case SignalStop:
-								p.restartTrack()
-								*statePtr = StateIdle
-								break BroadcastTrackLoop
-							case SignalReset:
-								*statePtr = StateIdle
-								p.reset()
-								break BroadcastTrackLoop
-							case SignalResume:
-								c = p.voiceConnection()
-								if c != nil {
-									break PausedLoop
-								}
-								// TODO: log message: staying paused cuz there is no voice channel
+			select {
+			case s := <-sigChan:
+				switch s {
+				case SignalPlay:
+					p.withMemory(func(m *PlayerMemory) {
+						m.play(statePtr)
+					})
+				case SignalPrevious:
+					p.previousTrack(statePtr)
+					break BroadcastTrackLoop
+				case SignalStop:
+					p.restartTrack()
+					*statePtr = StateIdle
+					break BroadcastTrackLoop
+				case SignalReset:
+					p.reset()
+					*statePtr = StateIdle
+					break BroadcastTrackLoop
+				case SignalNext:
+					break BroadcastTrackLoop
+				case SignalRestartTrack:
+					p.restartTrack()
+					break BroadcastTrackLoop
+				case SignalPause:
+					*statePtr = StatePaused
+				PausedLoop:
+					for {
+						s := <-sigChan
+						switch s {
+						case SignalPlay:
+							p.withMemory(func(m *PlayerMemory) {
+								m.play(statePtr)
+							})
+						case SignalPrevious:
+							p.previousTrack(statePtr)
+							*statePtr = StateIdle
+							break BroadcastTrackLoop
+						case SignalNext:
+							*statePtr = StateIdle
+							break BroadcastTrackLoop
+						case SignalStop:
+							p.restartTrack()
+							*statePtr = StateIdle
+							break BroadcastTrackLoop
+						case SignalRestartTrack:
+							p.restartTrack()
+							break BroadcastTrackLoop
+						case SignalReset:
+							*statePtr = StateIdle
+							p.reset()
+							break BroadcastTrackLoop
+						case SignalResume:
+							sendChan = p.sendChannel(debug)
+							if sendChan == nil {
+								return nil
 							}
+							break PausedLoop
 						}
 					}
-				default:
-					noSignal = true
 				}
+			default:
+				noSignal = true
+			}
 
-				if !noSignal {
-					debug().Msg("player: processed signal while playing")
-				}
+			if !noSignal {
+				debug().Msg("player: processed signal while playing")
+			}
 
-				err = binary.Read(f, binary.LittleEndian, &inBuf)
-				if err != nil {
-					if err == io.EOF || err == io.ErrUnexpectedEOF {
-						break
-					}
-					return fmt.Errorf("faied to read from audio file: %s: %v", track.audioFile, err)
-				}
-
-				numBytes, err := opusEncoder.Encode(inBuf, SampleSize, outPackets[outPacketIdx][:])
-				if err != nil {
-					return fmt.Errorf("transcode error: %v", err)
-				}
-
-				if numBytes == 0 {
+			err = binary.Read(f, binary.LittleEndian, &inBuf)
+			if err != nil {
+				if err == io.EOF || err == io.ErrUnexpectedEOF {
 					break
 				}
+				return fmt.Errorf("faied to read from audio file: %s: %v", track.audioFile, err)
+			}
 
-				c.OpusSend <- outPackets[outPacketIdx][:numBytes]
+			numBytes, err := opusEncoder.Encode(inBuf, SampleSize, outPackets[outPacketIdx][:])
+			if err != nil {
+				return fmt.Errorf("transcode error: %v", err)
+			}
 
-				outPacketIdx++
-				if outPacketIdx >= NumPacketBuffers {
-					outPacketIdx = 0
-				}
+			if numBytes == 0 {
+				break
+			}
+
+			sendChan <- outPackets[outPacketIdx][:numBytes]
+
+			outPacketIdx++
+			if outPacketIdx >= NumPacketBuffers {
+				outPacketIdx = 0
 			}
 		}
-
-		return nil
-	}()
-	if err != nil {
-		log.Err(err).Msg("player: error occured during playback")
 	}
+
+	return nil
 }
