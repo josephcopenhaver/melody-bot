@@ -31,6 +31,8 @@ docker run \
     \
     --rm -it \
     \
+    --cap-add SYS_NICE \
+    \
     "--network=${NETWORK}" \
     \
     --env-file "$PWD/.devcontainer/env" \

@@ -2,10 +2,8 @@ package handlers
 
 import (
 	"context"
-	"encoding/binary"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"os"
 	"os/exec"
@@ -219,10 +217,10 @@ func extractAudio(vidPath string) error {
 	onlyAudio := path.Join(tmpDir, "only-audio."+path.Base(vidPath))
 	{
 
-		cmd := exec.Command("ffmpeg", "-y", "-loglevel", "quiet", "-i", vidPath, "-ar", strconv.Itoa(service.SampleRate), "-ac", "1", "-vn", onlyAudio)
+		cmd := exec.Command("nice", "ffmpeg", "-y", "-loglevel", "quiet", "-i", vidPath, "-ar", strconv.Itoa(service.SampleRate), "-ac", "1", "-vn", onlyAudio)
 
 		// TODO: capture and log instead
-		cmd.Stdin = os.Stdin
+		cmd.Stdin = nil
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
 
@@ -238,10 +236,10 @@ func extractAudio(vidPath string) error {
 	normEbuWav := path.Join(tmpDir, "norm-ebu.wav")
 	{
 
-		cmd := exec.Command("ffmpeg-normalize", "--quiet", "-ar", strconv.Itoa(service.SampleRate), onlyAudio, "-o", normEbuWav)
+		cmd := exec.Command("nice", "ffmpeg-normalize", "--quiet", "-ar", strconv.Itoa(service.SampleRate), onlyAudio, "-o", normEbuWav)
 
 		// TODO: capture and log instead
-		cmd.Stdin = os.Stdin
+		cmd.Stdin = nil
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
 
@@ -257,10 +255,10 @@ func extractAudio(vidPath string) error {
 	s16leNormFile := path.Join(tmpDir, "s16le-norm."+path.Base(vidPath))
 	{
 
-		cmd := exec.Command("ffmpeg", "-y", "-loglevel", "quiet", "-i", normEbuWav, "-ar", strconv.Itoa(service.SampleRate), "-ac", "1", "-vn", "-f", "s16le", s16leNormFile)
+		cmd := exec.Command("nice", "ffmpeg", "-y", "-loglevel", "quiet", "-i", normEbuWav, "-ar", strconv.Itoa(service.SampleRate), "-ac", "1", "-vn", "-f", "s16le", s16leNormFile)
 
 		// TODO: capture and log instead
-		cmd.Stdin = os.Stdin
+		cmd.Stdin = nil
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
 
@@ -274,54 +272,20 @@ func extractAudio(vidPath string) error {
 
 	// create correct output format
 	audioFile := path.Join(path.Dir(vidPath), AudioFileName)
-	err = func() error {
+	{
+		cmd := exec.Command("nice", "./build/bin/convert-to-discord-opus", s16leNormFile, audioFile)
 
-		in, err := os.Open(s16leNormFile)
+		// TODO: capture and log instead
+		cmd.Stdin = nil
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+
+		err = cmd.Run()
 		if err != nil {
-			return err
+			return fmt.Errorf("convert-to-discord-opus command failed: %v", err)
 		}
 
-		defer in.Close()
-
-		out, err := os.OpenFile(audioFile, os.O_WRONLY|os.O_CREATE, 0664)
-		if err != nil {
-			return err
-		}
-
-		defer out.Close()
-
-		opusWriter, err := service.NewOpusWriter(out)
-		if err != nil {
-			return err
-		}
-
-		defer opusWriter.Flush()
-
-		inBufArray := [service.SampleSize * service.NumChannels]int16{}
-		inBuf := inBufArray[:]
-
-		for {
-
-			err = binary.Read(in, binary.LittleEndian, &inBuf)
-			if err != nil {
-				if err == io.EOF || err == io.ErrUnexpectedEOF {
-					break
-				}
-				return err
-			}
-
-			err = opusWriter.WritePacket(inBuf)
-			if err != nil {
-				return err
-			}
-		}
-
-		log.Info().Str("video_path", vidPath).Msg("done creating opus file stream")
-
-		return nil
-	}()
-	if err != nil {
-		return fmt.Errorf("failed to convert from pcm_s16le to opus packets: %s: %v", s16leNormFile, err)
+		log.Info().Str("video_path", vidPath).Msg("done converting pcm_s16le file to discord-opus")
 	}
 
 	err = os.RemoveAll(tmpDir)

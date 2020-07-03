@@ -7,6 +7,8 @@ services:
     build:
       context: $PWD/docker/shell
     image: josephcopenhaver/discord-bot--shell:${GIT_SHA:-latest}
+    cap_add:
+      - SYS_NICE
     entrypoint: bash
     networks:
       - infrastructure

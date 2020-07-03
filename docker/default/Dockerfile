@@ -11,7 +11,7 @@ RUN ./scripts/ci-build.sh \
 
 FROM debian:10.3
 
-# specify a working default working directory
+# specify a default working directory
 WORKDIR /workspace
 
 # install very basic networking utilities
@@ -34,6 +34,7 @@ RUN export DEBIAN_FRONTEND=noninteractive \
     opus-tools \
     ffmpeg \
     && pip3 install ffmpeg-normalize==1.19.1
+
 
 COPY --from=0 /workspace/build/bin/ ./build/bin/
 

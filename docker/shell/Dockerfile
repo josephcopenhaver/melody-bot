@@ -77,5 +77,5 @@ RUN export DEBIAN_FRONTEND=noninteractive \
     ffmpeg \
     && pip3 install ffmpeg-normalize==1.19.1
 
-# specify a working default working directory
+# specify a default working directory
 WORKDIR /workspace

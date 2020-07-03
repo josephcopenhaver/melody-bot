@@ -12,10 +12,6 @@ import (
 	"github.com/bwmarrin/discordgo"
 )
 
-const (
-	NumPacketBuffers = 4 // should always be 2 greater than the OpusSend channel packet size to ensure no buffer lag occurs and no corruption occurs, this also avoids allocations and reduces CPU burn
-)
-
 // Signal: a command that can be send to the player
 type Signal int8
 
@@ -396,11 +392,29 @@ func (p *Player) sendChannel(debug func() *zerolog.Event) chan<- []byte {
 func playerWorker(p *Player, guildId string, sigChan <-chan Signal) {
 
 	state := StateDefault
+	niceness := 19
 
 	debug := func() *zerolog.Event {
 		return log.Debug().
 			Interface("state", state).
 			Str("guild_id", guildId)
+	}
+
+	setNiceness := func(n int) error {
+
+		if niceness == n {
+
+			return nil
+		}
+
+		err := SetNiceness(n)
+		if err != nil {
+			return err
+		}
+
+		niceness = n
+
+		return nil
 	}
 
 	defer func() {
@@ -420,7 +434,7 @@ func playerWorker(p *Player, guildId string, sigChan <-chan Signal) {
 						Msg("player: recovered from panic")
 				}
 			}()
-			err := playerMainLoop(p, &state, debug, sigChan)
+			err := playerMainLoop(p, &state, debug, setNiceness, sigChan)
 			if err != nil {
 				log.Err(err).Msg("player: error occured during playback")
 			}
@@ -428,7 +442,8 @@ func playerWorker(p *Player, guildId string, sigChan <-chan Signal) {
 	}
 }
 
-func playerMainLoop(p *Player, statePtr *State, debug func() *zerolog.Event, sigChan <-chan Signal) error {
+func playerMainLoop(p *Player, statePtr *State, debug func() *zerolog.Event, setNiceness func(int) error, sigChan <-chan Signal) error {
+	var err error
 	var sendChan chan<- []byte
 
 	debug().Msg("player: main loop start: signal check")
@@ -452,6 +467,11 @@ func playerMainLoop(p *Player, statePtr *State, debug func() *zerolog.Event, sig
 			*statePtr = StatePlaying
 		}
 	case StateIdle:
+		err = setNiceness(19)
+		if err != nil {
+			return err
+		}
+
 		// signal trap 2/4:
 		// type: blocking
 		// signals recognized when in idle state ( stopped or partially errored )
@@ -511,13 +531,18 @@ func playerMainLoop(p *Player, statePtr *State, debug func() *zerolog.Event, sig
 		return nil
 	}
 
+	err = setNiceness(0)
+	if err != nil {
+		return err
+	}
+
 	f, err := os.Open(track.audioFile)
 	if err != nil {
 		return fmt.Errorf("failed to open audio file: %s: %v", track.audioFile, err)
 	}
 	defer f.Close()
 
-	// read packets from file and buffer them to send to broadcast channel
+	// read packets from file and buffer then to send to broadcast channel
 
 	opusReader := NewOpusReader(f)
 	outPackets := [NumPacketBuffers][SampleMaxBytes]byte{}
@@ -563,6 +588,12 @@ BroadcastTrackLoop:
 				break BroadcastTrackLoop
 			case SignalPause:
 				*statePtr = StatePaused
+
+				err = setNiceness(19)
+				if err != nil {
+					return err
+				}
+
 			PausedLoop:
 				for {
 					// signal trap 4/4:
@@ -599,6 +630,11 @@ BroadcastTrackLoop:
 						*statePtr = StatePlaying
 						break PausedLoop
 					}
+				}
+
+				err = setNiceness(0)
+				if err != nil {
+					return err
 				}
 
 				// rediscover the channel we need to send on
