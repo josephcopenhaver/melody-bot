@@ -273,7 +273,7 @@ func extractAudio(vidPath string) error {
 	// create correct output format
 	audioFile := path.Join(path.Dir(vidPath), AudioFileName)
 	{
-		cmd := exec.Command("nice", "./build/bin/convert-to-discord-opus", s16leNormFile, audioFile)
+		cmd := exec.Command("nice", "./build/bin/convert-to-discord-opus", "-i", s16leNormFile, "-o", audioFile)
 
 		// TODO: capture and log instead
 		cmd.Stdin = nil
