@@ -2,6 +2,7 @@ package service
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"sync"
 	"sync/atomic"
@@ -548,7 +549,6 @@ func playerMainLoop(p *Player, statePtr *State, debug func() *zerolog.Event, set
 	outPackets := [NumPacketBuffers][SampleMaxBytes]byte{}
 	outPacketIdx := 0
 
-BroadcastTrackLoop:
 	for {
 
 		noSignal := false
@@ -572,20 +572,20 @@ BroadcastTrackLoop:
 				})
 			case SignalPrevious:
 				p.previousTrack()
-				break BroadcastTrackLoop
+				return nil
 			case SignalStop:
 				p.restartTrack()
 				*statePtr = StateIdle
-				break BroadcastTrackLoop
+				return nil
 			case SignalReset:
 				p.reset()
 				*statePtr = StateIdle
-				break BroadcastTrackLoop
+				return nil
 			case SignalNext:
-				break BroadcastTrackLoop
+				return nil
 			case SignalRestartTrack:
 				p.restartTrack()
-				break BroadcastTrackLoop
+				return nil
 			case SignalPause:
 				*statePtr = StatePaused
 
@@ -610,22 +610,22 @@ BroadcastTrackLoop:
 					case SignalPrevious:
 						p.previousTrack()
 						*statePtr = StateIdle
-						break BroadcastTrackLoop
+						return nil
 					case SignalNext:
 						*statePtr = StateIdle
-						break BroadcastTrackLoop
+						return nil
 					case SignalStop:
 						p.restartTrack()
 						*statePtr = StateIdle
-						break BroadcastTrackLoop
+						return nil
 					case SignalRestartTrack:
 						p.restartTrack()
 						*statePtr = StateIdle
-						break BroadcastTrackLoop
+						return nil
 					case SignalReset:
 						p.reset()
 						*statePtr = StateIdle
-						break BroadcastTrackLoop
+						return nil
 					case SignalResume:
 						*statePtr = StatePlaying
 						break PausedLoop
@@ -656,11 +656,14 @@ BroadcastTrackLoop:
 
 		numBytes, err := opusReader.ReadPacket(outPackets[outPacketIdx][:])
 		if err != nil {
+			if err == io.EOF {
+				return nil
+			}
 			return fmt.Errorf("error reading file: %s: %v", track.audioFile, err)
 		}
 
 		if numBytes == 0 {
-			break
+			return nil
 		}
 
 		sendChan <- outPackets[outPacketIdx][:numBytes]
