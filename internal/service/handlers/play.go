@@ -251,29 +251,15 @@ func extractAudio(vidPath string) error {
 		log.Info().Str("video_path", vidPath).Msg("done normalizing loudness to .wav format")
 	}
 
-	// create correct output format
-	s16leNormFile := path.Join(tmpDir, "s16le-norm."+path.Base(vidPath))
-	{
-
-		cmd := exec.Command("nice", "ffmpeg", "-y", "-loglevel", "quiet", "-i", normEbuWav, "-ar", strconv.Itoa(service.SampleRate), "-ac", "1", "-vn", "-f", "s16le", s16leNormFile)
-
-		// TODO: capture and log instead
-		cmd.Stdin = nil
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
-
-		err = cmd.Run()
-		if err != nil {
-			return fmt.Errorf("ffmpeg command (s16le output) failed: %v", err)
-		}
-
-		log.Info().Str("video_path", vidPath).Msg("done converting .wav file to pcm_s16le")
-	}
-
-	// create correct output format
+	// convert from .wav to discord-opus format
 	audioFile := path.Join(path.Dir(vidPath), AudioFileName)
 	{
-		cmd := exec.Command("nice", "./build/bin/convert-to-discord-opus", "-i", s16leNormFile, "-o", audioFile)
+
+		escape := func(s string) string {
+			return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
+		}
+
+		cmd := exec.Command("bash", "-c", "set -eo pipefail ; nice ffmpeg -y -loglevel quiet -i "+escape(normEbuWav)+" -ar "+strconv.Itoa(service.SampleRate)+" -ac 1 -vn -f s16le pipe:1 | nice ./build/bin/convert-to-discord-opus -o "+escape(audioFile))
 
 		// TODO: capture and log instead
 		cmd.Stdin = nil
@@ -282,10 +268,10 @@ func extractAudio(vidPath string) error {
 
 		err = cmd.Run()
 		if err != nil {
-			return fmt.Errorf("convert-to-discord-opus command failed: %v", err)
+			return fmt.Errorf("bash (ffmpeg + convert-to-discord-opus) command failed: %v", err)
 		}
 
-		log.Info().Str("video_path", vidPath).Msg("done converting pcm_s16le file to discord-opus")
+		log.Info().Str("video_path", vidPath).Msg("done converting .wav file to discord-opus")
 	}
 
 	err = os.RemoveAll(tmpDir)

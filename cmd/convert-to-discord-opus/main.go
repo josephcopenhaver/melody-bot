@@ -52,7 +52,8 @@ func convert(inputFile string, outputFile string) error {
 			reader = os.Stdin
 		}
 
-		in = bufio.NewReaderSize(bufio.NewReader(reader), 2*(service.SampleSize*service.NumChannels))
+		bytesPerUint16 := binary.Size(uint16(0)) / binary.Size(byte(0))
+		in = bufio.NewReaderSize(bufio.NewReader(reader), 2*bytesPerUint16*(service.SampleSize*service.NumChannels))
 	}
 
 	var writer io.Writer
