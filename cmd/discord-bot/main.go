@@ -50,13 +50,7 @@ func main() {
 			Msg("failed to register handlers")
 	}
 
-	// set process niceness one lower to ensure we can raise niceness back up agian if needed
-	err = service.SetNiceness(-1)
-	if err != nil {
-		log.Fatal().
-			Err(err).
-			Msg("failed to set process niceness lower: missing SYS_NICE docker capability?")
-	}
+	service.NicenessInit()
 
 	// set process niceness as high as possible until sending rtp traffic
 	err = service.SetNiceness(19)

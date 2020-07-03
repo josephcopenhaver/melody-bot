@@ -9,4 +9,4 @@
 - [ ] on track change, broadcast a message to a text channel as to what is playing and what is coming next
 - [ ] when channel is empty, stop playback
 - [ ] when servicing more than one guild, keep service process niceness at 0
-- [ ] if missing niceness capabilities, never lower service niceness
+- [x] if missing niceness capabilities, never lower service niceness
