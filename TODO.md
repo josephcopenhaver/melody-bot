@@ -7,3 +7,4 @@
 - [ ] be able to log bot messages to a discord channel
 - [ ] add a way to print the current playlist
 - [ ] on track change, broadcast a message to a text channel as to what is playing and what is coming next
+- [ ] when channel is empty, stop playback
