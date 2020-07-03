@@ -91,7 +91,7 @@ func Play(s *discordgo.Session, m *discordgo.MessageCreate, p *service.Player, h
 		}
 	} else {
 
-		_, err = s.ChannelMessageSend(m.ChannelID, "playing from cache: "+urlStr)
+		_, err = s.ChannelMessageSend(m.ChannelID, "download skipped, cached: "+urlStr)
 		if err != nil {
 			log.Err(err).
 				Msg("failed to send play from cache confirmation")
@@ -101,7 +101,7 @@ func Play(s *discordgo.Session, m *discordgo.MessageCreate, p *service.Player, h
 		return nil
 	}
 
-	_, err = s.ChannelMessageSend(m.ChannelID, "downloading audio file...")
+	_, err = s.ChannelMessageSend(m.ChannelID, "downloading audio file: "+urlStr)
 	if err != nil {
 		log.Err(err).
 			Msg("failed to send download start msg")
@@ -180,7 +180,7 @@ func Play(s *discordgo.Session, m *discordgo.MessageCreate, p *service.Player, h
 	}
 	_ = fi.Close() // don't care about error here, just wanted to create the file and we did
 
-	_, err = s.ChannelMessageSend(m.ChannelID, "download complete, playing: "+urlStr)
+	_, err = s.ChannelMessageSend(m.ChannelID, "download complete, queuing: "+urlStr)
 	if err != nil {
 		log.Err(err).
 			Msg("failed to send download done msg")

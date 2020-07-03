@@ -6,3 +6,5 @@
 6. encode to discord friendly 8bit opus format
 7. add a way to print the current playlist
 8. on track change, broadcast a message to a text channel as to what is playing and what is coming next
+9. if calling join without a channel indicator, join the voice channel that the user is in
+10. be able to log bot messages to a discord channel

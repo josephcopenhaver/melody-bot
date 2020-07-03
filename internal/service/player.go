@@ -24,6 +24,22 @@ const (
 	NumPacketBuffers = 4 // should always be 2 greater than the OpusSend channel packet size to ensure no buffer lag occurs and no corruption occurs, this also avoids allocations and reduces CPU burn
 )
 
+var NumBytesForOpusPacketLength int
+
+func init() {
+	if SampleMaxBytes > 0xffffffff {
+		NumBytesForOpusPacketLength = 8
+	} else if SampleMaxBytes > 0xffff {
+		NumBytesForOpusPacketLength = 4
+	} else if SampleMaxBytes > 0xff {
+		NumBytesForOpusPacketLength = 2
+	} else if SampleMaxBytes > 0 {
+		NumBytesForOpusPacketLength = 1
+	} else {
+		log.Fatal().Msg("sample size or num channels: too high or zero")
+	}
+}
+
 // Signal: a command that can be send to the player
 type Signal int8
 
@@ -91,8 +107,8 @@ type PlayerMemory struct {
 	looping         bool
 	currentTrackIdx int
 	// logChannelId *string // TODO: make this a thing
-	tracks          []track
-	playRequestChan chan *playRequest
+	tracks       []track
+	playRequests chan *playRequest
 }
 
 func (m *PlayerMemory) reset() {
@@ -105,7 +121,7 @@ func (m *PlayerMemory) reset() {
 	}
 
 	*m = PlayerMemory{
-		playRequestChan: m.playRequestChan,
+		playRequests: m.playRequests,
 	}
 }
 
@@ -120,25 +136,23 @@ func (m *PlayerMemory) indexOfTrack(file string) int {
 	return -1
 }
 
-func (m *PlayerMemory) play(s *State) {
+func (m *PlayerMemory) play(s State) {
 
-	r := <-m.playRequestChan
+	r := <-m.playRequests
 
 	if r.track != nil {
 		t := *r.track
 
-		switch *s {
+		switch s {
 		case StateDefault:
 			m.tracks = []track{t}
 			m.currentTrackIdx = -1
-			*s = StatePlaying
 		case StateIdle:
 			i := m.indexOfTrack(t.audioFile)
 			if i < 0 {
 				m.tracks = append(m.tracks, t)
 			}
 			m.currentTrackIdx = len(m.tracks) - 2
-			*s = StatePlaying
 		case StatePaused:
 			i := m.indexOfTrack(t.audioFile)
 			if i < 0 {
@@ -165,10 +179,10 @@ func NewPlayer(guildId string) *Player {
 		signalChan: make(chan Signal, 1),
 	}
 
-	playRequestChan := make(chan *playRequest, 1)
+	playRequests := make(chan *playRequest, 1)
 
 	p.memory.Store(PlayerMemory{
-		playRequestChan: playRequestChan,
+		playRequests: playRequests,
 	})
 	go playerWorker(p, guildId, p.signalChan)
 
@@ -271,8 +285,7 @@ func (p *Player) restartTrack() {
 	})
 }
 
-// TODO: maybe change playing state when they skip?
-func (p *Player) previousTrack(s *State) {
+func (p *Player) previousTrack() {
 	p.withMemory(func(m *PlayerMemory) {
 		if len(m.tracks) < 2 {
 			m.currentTrackIdx = -1
@@ -330,7 +343,7 @@ func (p *Player) Play(url string, file string) bool {
 
 	p.withMemory(func(m *PlayerMemory) {
 
-		m.playRequestChan <- &playRequest{
+		m.playRequests <- &playRequest{
 			track: &track{
 				url:       url,
 				audioFile: file,
@@ -366,9 +379,9 @@ func (p *Player) RestartTrack() {
 	p.signalChan <- SignalRestartTrack
 }
 
-func (p *Player) sendChannel(debug func() *zerolog.Event) chan []byte {
+func (p *Player) sendChannel(debug func() *zerolog.Event) chan<- []byte {
 	var c *discordgo.VoiceConnection
-	var result chan []byte
+	var result chan<- []byte
 
 	p.withMemory(func(m *PlayerMemory) {
 		c = m.voiceConnection
@@ -436,9 +449,7 @@ func playerWorker(p *Player, guildId string, sigChan <-chan Signal) {
 
 func playerMainLoop(p *Player, statePtr *State, debug func() *zerolog.Event, sigChan <-chan Signal) error {
 
-	debug().Msg("player: main loop start")
-
-	debug().Msg("player: signal check")
+	debug().Msg("player: main loop start: signal check")
 
 	switch *statePtr {
 	case StateDefault:
@@ -449,8 +460,9 @@ func playerMainLoop(p *Player, statePtr *State, debug func() *zerolog.Event, sig
 		switch s {
 		case SignalPlay:
 			p.withMemory(func(m *PlayerMemory) {
-				m.play(statePtr)
+				m.play(*statePtr)
 			})
+			*statePtr = StatePlaying
 		case SignalResume:
 			if p.setNextTrackIndex(0) {
 				*statePtr = StatePlaying
@@ -464,7 +476,7 @@ func playerMainLoop(p *Player, statePtr *State, debug func() *zerolog.Event, sig
 		switch s {
 		case SignalPlay:
 			p.withMemory(func(m *PlayerMemory) {
-				m.play(statePtr)
+				m.play(*statePtr)
 			})
 			*statePtr = StatePlaying
 		case SignalResume:
@@ -529,15 +541,17 @@ func playerMainLoop(p *Player, statePtr *State, debug func() *zerolog.Event, sig
 
 			noSignal := false
 
+			// debug().Msg("player: broadcast loop start: signal check")
+
 			select {
 			case s := <-sigChan:
 				switch s {
 				case SignalPlay:
 					p.withMemory(func(m *PlayerMemory) {
-						m.play(statePtr)
+						m.play(*statePtr)
 					})
 				case SignalPrevious:
-					p.previousTrack(statePtr)
+					p.previousTrack()
 					break BroadcastTrackLoop
 				case SignalStop:
 					p.restartTrack()
@@ -560,10 +574,10 @@ func playerMainLoop(p *Player, statePtr *State, debug func() *zerolog.Event, sig
 						switch s {
 						case SignalPlay:
 							p.withMemory(func(m *PlayerMemory) {
-								m.play(statePtr)
+								m.play(*statePtr)
 							})
 						case SignalPrevious:
-							p.previousTrack(statePtr)
+							p.previousTrack()
 							*statePtr = StateIdle
 							break BroadcastTrackLoop
 						case SignalNext:

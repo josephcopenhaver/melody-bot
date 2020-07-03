@@ -50,6 +50,7 @@ func newHandleMessageCreate(name string, handler func(*discordgo.Session, *disco
 
 func (srv *Server) addMuxHandlers() {
 	srv.DiscordSession.AddHandler(func(s *discordgo.Session, m *discordgo.MessageCreate) {
+		var p *service.Player
 		var handled bool
 
 		// ignore messages I (the bot) create
@@ -57,7 +58,9 @@ func (srv *Server) addMuxHandlers() {
 			return
 		}
 
-		p := srv.Brain.Player(m.GuildID)
+		if m.GuildID != "" {
+			p = srv.Brain.Player(m.GuildID)
+		}
 
 		for i := range srv.EventHandlers.MessageCreate {
 
