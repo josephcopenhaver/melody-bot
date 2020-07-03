@@ -2,8 +2,10 @@ package handlers
 
 import (
 	"context"
+	"encoding/binary"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"os/exec"
@@ -21,7 +23,7 @@ import (
 )
 
 const (
-	AudioFileName = "audio.s16le"
+	AudioFileName = "audio.discord-opus"
 )
 
 // TODO: handle voice channel reconnects forced by the server
@@ -163,6 +165,12 @@ func Play(s *discordgo.Session, m *discordgo.MessageCreate, p *service.Player, h
 		return fmt.Errorf("download interrupted: %v", err)
 	}
 
+	_, err = s.ChannelMessageSend(m.ChannelID, "download complete, transcode starting: "+urlStr)
+	if err != nil {
+		log.Err(err).
+			Msg("failed to send download done msg")
+	}
+
 	err = extractAudio(dstFilePath)
 	if err != nil {
 		return fmt.Errorf("failed to extract audio: %v", err)
@@ -180,7 +188,7 @@ func Play(s *discordgo.Session, m *discordgo.MessageCreate, p *service.Player, h
 	}
 	_ = fi.Close() // don't care about error here, just wanted to create the file and we did
 
-	_, err = s.ChannelMessageSend(m.ChannelID, "download complete, queuing: "+urlStr)
+	_, err = s.ChannelMessageSend(m.ChannelID, "transcode complete, queuing: "+urlStr)
 	if err != nil {
 		log.Err(err).
 			Msg("failed to send download done msg")
@@ -222,6 +230,8 @@ func extractAudio(vidPath string) error {
 		if err != nil {
 			return fmt.Errorf("ffmpeg command (audio only) failed: %v", err)
 		}
+
+		log.Info().Str("video_path", vidPath).Msg("done extracting audio")
 	}
 
 	// normalize audio using EBU: https://en.wikipedia.org/wiki/EBU_R_128
@@ -239,13 +249,15 @@ func extractAudio(vidPath string) error {
 		if err != nil {
 			return fmt.Errorf("ffmpeg-normalize command (normalize audio) failed: %v", err)
 		}
+
+		log.Info().Str("video_path", vidPath).Msg("done normalizing loudness to .wav format")
 	}
 
 	// create correct output format
-	audioFile := path.Join(path.Dir(vidPath), AudioFileName)
+	s16leNormFile := path.Join(tmpDir, "s16le-norm."+path.Base(vidPath))
 	{
 
-		cmd := exec.Command("ffmpeg", "-y", "-loglevel", "quiet", "-i", normEbuWav, "-ar", strconv.Itoa(service.SampleRate), "-ac", "1", "-vn", "-f", "s16le", audioFile)
+		cmd := exec.Command("ffmpeg", "-y", "-loglevel", "quiet", "-i", normEbuWav, "-ar", strconv.Itoa(service.SampleRate), "-ac", "1", "-vn", "-f", "s16le", s16leNormFile)
 
 		// TODO: capture and log instead
 		cmd.Stdin = os.Stdin
@@ -256,6 +268,60 @@ func extractAudio(vidPath string) error {
 		if err != nil {
 			return fmt.Errorf("ffmpeg command (s16le output) failed: %v", err)
 		}
+
+		log.Info().Str("video_path", vidPath).Msg("done converting .wav file to pcm_s16le")
+	}
+
+	// create correct output format
+	audioFile := path.Join(path.Dir(vidPath), AudioFileName)
+	err = func() error {
+
+		in, err := os.Open(s16leNormFile)
+		if err != nil {
+			return err
+		}
+
+		defer in.Close()
+
+		out, err := os.OpenFile(audioFile, os.O_WRONLY|os.O_CREATE, 0664)
+		if err != nil {
+			return err
+		}
+
+		defer out.Close()
+
+		opusWriter, err := service.NewOpusWriter(out)
+		if err != nil {
+			return err
+		}
+
+		defer opusWriter.Flush()
+
+		inBufArray := [service.SampleSize * service.NumChannels]int16{}
+		inBuf := inBufArray[:]
+
+		for {
+
+			err = binary.Read(in, binary.LittleEndian, &inBuf)
+			if err != nil {
+				if err == io.EOF || err == io.ErrUnexpectedEOF {
+					break
+				}
+				return err
+			}
+
+			err = opusWriter.WritePacket(inBuf)
+			if err != nil {
+				return err
+			}
+		}
+
+		log.Info().Str("video_path", vidPath).Msg("done creating opus file stream")
+
+		return nil
+	}()
+	if err != nil {
+		return fmt.Errorf("failed to convert from pcm_s16le to opus packets: %s: %v", s16leNormFile, err)
 	}
 
 	err = os.RemoveAll(tmpDir)
