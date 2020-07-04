@@ -9,6 +9,8 @@ import (
 
 func (s *Server) Handlers() error {
 
+	// https://discord.com/developers/docs/topics/gateway#event-names
+
 	s.addMuxHandlers()
 
 	s.AddHandler("ping", handlers.Ping)
@@ -34,6 +36,37 @@ func (s *Server) Handlers() error {
 	s.AddHandler("restart-track", handlers.RestartTrack)
 
 	s.AddHandler("clear-playlist", handlers.ClearPlaylist)
+
+	s.DiscordSession.AddHandler(func(s *discordgo.Session, v *discordgo.VoiceStateUpdate) {
+		// https://discord.com/developers/docs/topics/gateway#voice-state-update
+		// Sent when someone joins/leaves/moves voice channels. Inner payload is a voice state object.
+		log.Warn().
+			Interface("payload", v).
+			Msg("event: voice state update")
+
+		// intent: when the bot is forced to change channels, may want to renew the brodcast channel
+		// intent: when current channel becomes empty, ensure playback is paused or stopped
+	})
+
+	s.DiscordSession.AddHandler(func(s *discordgo.Session, v *discordgo.GuildDelete) {
+		// https://discord.com/developers/docs/topics/gateway#guild-delete
+		// Sent when a guild becomes unavailable during a guild outage, or when the user leaves or is removed from a guild. The inner payload is an unavailable guild object. If the unavailable field is not set, the user was removed from the guild.
+		log.Warn().
+			Interface("payload", v).
+			Msg("event: guild delete")
+
+		// intent: delete any active player ( stop broadcast goroutine ) when bot is kicked from a server
+	})
+
+	s.DiscordSession.AddHandler(func(s *discordgo.Session, v *discordgo.ChannelDelete) {
+		// https://discord.com/developers/docs/topics/gateway#channel-delete
+		// Sent when a channel relevant to the current user is deleted. The inner payload is a channel object.
+		log.Warn().
+			Interface("payload", v).
+			Msg("event: channel delete")
+
+		// intent: pause any active broadcast when bot is kicked from a channel
+	})
 
 	return nil
 }

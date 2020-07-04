@@ -3,10 +3,14 @@
 - [ ] document required bot permissions: https://discordpy.readthedocs.io/en/latest/discord.html here https://discord.com/developers/applications
 - [ ] document an easy way for users to create their own bot: heroku app?
 - [ ] auto join the voice channel a guild member is in when they ask you to play a file?
-- [ ] encode to discord friendly 8bit opus format
+- [x] encode to discord friendly 8bit opus format
 - [ ] be able to log bot messages to a discord channel
 - [ ] add a way to print the current playlist
 - [ ] on track change, broadcast a message to a text channel as to what is playing and what is coming next
 - [ ] when channel is empty, stop playback
 - [ ] when servicing more than one guild, keep service process niceness at 0
 - [x] if missing niceness capabilities, never lower service niceness
+- [ ] simplify handler registration
+- [ ] when @msg the bot from a specific text channel, support bringing them to the target channel logically
+- [ ] when @msg the bot in a public channel, messages in public channel should indicate who issued the command
+- [ ] when direct message the bot, echo results back to the user, but also log activity to the "target logical log channel"

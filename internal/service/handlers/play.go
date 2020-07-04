@@ -42,20 +42,22 @@ func (w *playWorkPermit) Acquired() bool {
 	return w.acquired
 }
 
-func (w *playWorkPermit) Done() {
+func (w *playWorkPermit) Done() error {
 	if !w.acquired {
-		return
+		return nil
 	}
 
 	w.mutex.Lock()
 	defer w.mutex.Unlock()
 
 	if atomic.LoadInt32(&w.responseRecorded) != 0 {
-		return
+		return nil
 	}
 	atomic.StoreInt32(&w.responseRecorded, 1)
 
 	w.onPass()
+
+	return nil
 }
 
 func (w *playWorkPermit) Fail() {
@@ -249,9 +251,7 @@ func Play(s *discordgo.Session, m *discordgo.MessageCreate, p *service.Player, h
 
 			play(p, urlStr, cacheDir)
 
-			permit.Done()
-
-			return nil
+			return permit.Done()
 		}
 	}
 
@@ -348,8 +348,7 @@ func Play(s *discordgo.Session, m *discordgo.MessageCreate, p *service.Player, h
 
 	play(p, urlStr, cacheDir)
 
-	permit.Done()
-	return nil
+	return permit.Done()
 }
 
 func extractAudio(vidPath string) error {
