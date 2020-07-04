@@ -7,18 +7,16 @@ import (
 	"github.com/josephcopenhaver/discord-bot/internal/service"
 )
 
-var reRestartTrack = regexp.MustCompile(`^\s*restart\s+track\s*$`)
+func RestartTrack() (string, *regexp.Regexp, func(*discordgo.Session, *discordgo.MessageCreate, *service.Player) error) {
 
-func RestartTrack(s *discordgo.Session, m *discordgo.MessageCreate, p *service.Player, handled *bool) error {
+	n := "restart-track"
+	m := regexp.MustCompile(`^\s*restart\s+track\s*$`)
+	h := func(s *discordgo.Session, m *discordgo.MessageCreate, p *service.Player) error {
 
-	args := regexMap(reRestartTrack, m.Message.Content)
-	if args == nil {
+		p.RestartTrack()
+
 		return nil
 	}
 
-	*handled = true
-
-	p.RestartTrack()
-
-	return nil
+	return n, m, h
 }

@@ -7,18 +7,16 @@ import (
 	"github.com/josephcopenhaver/discord-bot/internal/service"
 )
 
-var reClearPlaylist = regexp.MustCompile(`^\s*clear\s+playlist\s*$`)
+func ClearPlaylist() (string, *regexp.Regexp, func(*discordgo.Session, *discordgo.MessageCreate, *service.Player) error) {
 
-func ClearPlaylist(s *discordgo.Session, m *discordgo.MessageCreate, p *service.Player, handled *bool) error {
+	n := "clear-playlist"
+	m := regexp.MustCompile(`^\s*clear\s+playlist\s*$`)
+	h := func(s *discordgo.Session, m *discordgo.MessageCreate, p *service.Player) error {
 
-	args := regexMap(reClearPlaylist, m.Message.Content)
-	if args == nil {
+		p.ClearPlaylist()
+
 		return nil
 	}
 
-	*handled = true
-
-	p.ClearPlaylist()
-
-	return nil
+	return n, m, h
 }

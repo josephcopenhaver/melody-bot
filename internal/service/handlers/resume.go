@@ -1,21 +1,20 @@
 package handlers
 
 import (
-	"strings"
-
 	"github.com/bwmarrin/discordgo"
 	"github.com/josephcopenhaver/discord-bot/internal/service"
 )
 
-func Resume(s *discordgo.Session, m *discordgo.MessageCreate, p *service.Player, handled *bool) error {
+func Resume() (string, []string, func(*discordgo.Session, *discordgo.MessageCreate, *service.Player) error) {
 
-	if strings.TrimSpace(m.Message.Content) != "resume" && strings.TrimSpace(m.Message.Content) != "play" {
+	n := "resume"
+	m := []string{"resume"}
+	h := func(s *discordgo.Session, m *discordgo.MessageCreate, p *service.Player) error {
+
+		p.Resume()
+
 		return nil
 	}
 
-	*handled = true
-
-	p.Resume()
-
-	return nil
+	return n, m, h
 }

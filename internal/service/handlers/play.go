@@ -160,195 +160,192 @@ var playAcquireWorkPermit = func() func(string, func() (bool, error)) (*playWork
 	}
 }()
 
-var rePlay = regexp.MustCompile(`^\s*play\s+(?P<url>[^\s]+.*?)\s*$`)
+func Play() (string, *regexp.Regexp, func(*discordgo.Session, *discordgo.MessageCreate, *service.Player, map[string]string) error) {
 
-func Play(s *discordgo.Session, m *discordgo.MessageCreate, p *service.Player, handled *bool) error {
+	n := "play"
+	m := regexp.MustCompile(`^\s*play\s+(?P<url>[^\s]+.*?)\s*$`)
+	h := func(s *discordgo.Session, m *discordgo.MessageCreate, p *service.Player, args map[string]string) error {
+		urlStr := args["url"]
 
-	args := regexMap(rePlay, m.Message.Content)
-	if args == nil {
-		return nil
-	}
-
-	urlStr := args["url"]
-
-	if urlStr == "" {
-		return nil
-	}
-
-	*handled = true
-
-	// ensure that the bot is first in a voice channel
-	c := func() *discordgo.VoiceConnection {
-		s.RLock()
-		defer s.RUnlock()
-
-		return s.VoiceConnections[m.GuildID]
-	}()
-	if c == nil {
-		return errors.New("not in a voice channel")
-	}
-
-	dlc := ytdl.Client{
-		HTTPClient: http.DefaultClient,
-		Logger:     log.Logger,
-	}
-
-	vidInfo, err := dlc.GetVideoInfo(context.Background(), urlStr)
-	if err != nil {
-		return fmt.Errorf("failed to get video info: %v", err)
-	} else if vidInfo.ID == "" {
-		return errors.New("failed to get video id")
-	}
-
-	// log.Debug().
-	// 	Interface("video_info", vidInfo).
-	// 	Msg("video info")
-
-	cacheDir := path.Join(".media-cache", "v1", vidInfo.ID)
-	downloadedRef := path.Join(cacheDir, ".dl-complete")
-
-	err = os.MkdirAll(cacheDir, os.ModePerm)
-	if err != nil {
-		return fmt.Errorf("failed to make cache directory: %s: %v", cacheDir, err)
-	}
-
-	verifyCacheEntry := func() (bool, error) {
-
-		_, err := os.Stat(downloadedRef)
-		if err != nil {
-			if !os.IsNotExist(err) {
-				return false, fmt.Errorf("failed to read file system: %v", err)
-			}
-
-			return false, nil
+		if urlStr == "" {
+			return nil
 		}
 
-		return true, nil
-	}
+		// ensure that the bot is first in a voice channel
+		c := func() *discordgo.VoiceConnection {
+			s.RLock()
+			defer s.RUnlock()
 
-	permit, err := playAcquireWorkPermit(vidInfo.ID, verifyCacheEntry)
-	if err != nil {
-		return err
-	}
-	if !permit.Acquired() {
-		return fmt.Errorf("media already processing: %s", urlStr)
-	}
-	defer permit.Fail()
-
-	// short circuit if cached result exists
-	{
-		ok, err := verifyCacheEntry()
-		if err != nil {
-			return err
-		}
-
-		if ok {
-			_, err = s.ChannelMessageSend(m.ChannelID, "download skipped, cached: "+urlStr)
-			if err != nil {
-				log.Err(err).
-					Msg("failed to send play from cache confirmation")
-			}
-
-			play(p, urlStr, cacheDir)
-
-			return permit.Done()
-		}
-	}
-
-	_, err = s.ChannelMessageSend(m.ChannelID, "downloading audio file: "+urlStr)
-	if err != nil {
-		log.Err(err).
-			Msg("failed to send download start msg")
-	}
-
-	var dstFilePath string
-	var dstFormat *ytdl.Format
-
-	// TODO: find the lowest size video format
-	for _, f := range vidInfo.Formats {
-
-		if strings.ToLower(f.Extension) != "mp4" {
-			continue
-		}
-
-		dstFilePath = path.Join(cacheDir, "video.mp4")
-		dstFormat = f
-		break
-	}
-
-	if dstFormat == nil {
-		return errors.New("failed to find a usable video format")
-	}
-
-	log.Warn().
-		Str("author_id", m.Author.ID).
-		Str("author_username", m.Author.Username).
-		Str("message_id", m.ID).
-		Interface("message_timestamp", m.Message.Timestamp).
-		Msg("video download starting")
-
-	err = func() error {
-
-		f, err := os.OpenFile(dstFilePath, os.O_WRONLY|os.O_CREATE, 0664)
-		if err != nil {
-			return err
-		}
-
-		// TODO: instead of deleting incomplete downloads, try appending to whatever previous progress has been done
-
-		cleanup := func() {
-			f.Close()
-			os.Remove(dstFilePath)
-		}
-		defer func() {
-			cleanup()
+			return s.VoiceConnections[m.GuildID]
 		}()
+		if c == nil {
+			return errors.New("not in a voice channel")
+		}
 
-		err = dlc.Download(context.Background(), vidInfo, dstFormat, f)
+		dlc := ytdl.Client{
+			HTTPClient: http.DefaultClient,
+			Logger:     log.Logger,
+		}
+
+		vidInfo, err := dlc.GetVideoInfo(context.Background(), urlStr)
+		if err != nil {
+			return fmt.Errorf("failed to get video info: %v", err)
+		} else if vidInfo.ID == "" {
+			return errors.New("failed to get video id")
+		}
+
+		// log.Debug().
+		// 	Interface("video_info", vidInfo).
+		// 	Msg("video info")
+
+		cacheDir := path.Join(".media-cache", "v1", vidInfo.ID)
+		downloadedRef := path.Join(cacheDir, ".dl-complete")
+
+		err = os.MkdirAll(cacheDir, os.ModePerm)
+		if err != nil {
+			return fmt.Errorf("failed to make cache directory: %s: %v", cacheDir, err)
+		}
+
+		verifyCacheEntry := func() (bool, error) {
+
+			_, err := os.Stat(downloadedRef)
+			if err != nil {
+				if !os.IsNotExist(err) {
+					return false, fmt.Errorf("failed to read file system: %v", err)
+				}
+
+				return false, nil
+			}
+
+			return true, nil
+		}
+
+		permit, err := playAcquireWorkPermit(vidInfo.ID, verifyCacheEntry)
 		if err != nil {
 			return err
 		}
+		if !permit.Acquired() {
+			return fmt.Errorf("media already processing: %s", urlStr)
+		}
+		defer permit.Fail()
 
-		cleanup = func() {}
+		// short circuit if cached result exists
+		{
+			ok, err := verifyCacheEntry()
+			if err != nil {
+				return err
+			}
 
-		return f.Close()
-	}()
-	if err != nil {
-		return fmt.Errorf("download interrupted: %v", err)
+			if ok {
+				_, err = s.ChannelMessageSend(m.ChannelID, "download skipped, cached: "+urlStr)
+				if err != nil {
+					log.Err(err).
+						Msg("failed to send play from cache confirmation")
+				}
+
+				play(p, urlStr, cacheDir)
+
+				return permit.Done()
+			}
+		}
+
+		_, err = s.ChannelMessageSend(m.ChannelID, "downloading audio file: "+urlStr)
+		if err != nil {
+			log.Err(err).
+				Msg("failed to send download start msg")
+		}
+
+		var dstFilePath string
+		var dstFormat *ytdl.Format
+
+		// TODO: find the lowest size video format
+		for _, f := range vidInfo.Formats {
+
+			if strings.ToLower(f.Extension) != "mp4" {
+				continue
+			}
+
+			dstFilePath = path.Join(cacheDir, "video.mp4")
+			dstFormat = f
+			break
+		}
+
+		if dstFormat == nil {
+			return errors.New("failed to find a usable video format")
+		}
+
+		log.Warn().
+			Str("author_id", m.Author.ID).
+			Str("author_username", m.Author.Username).
+			Str("message_id", m.ID).
+			Interface("message_timestamp", m.Message.Timestamp).
+			Msg("video download starting")
+
+		err = func() error {
+
+			f, err := os.OpenFile(dstFilePath, os.O_WRONLY|os.O_CREATE, 0664)
+			if err != nil {
+				return err
+			}
+
+			// TODO: instead of deleting incomplete downloads, try appending to whatever previous progress has been done
+
+			cleanup := func() {
+				f.Close()
+				os.Remove(dstFilePath)
+			}
+			defer func() {
+				cleanup()
+			}()
+
+			err = dlc.Download(context.Background(), vidInfo, dstFormat, f)
+			if err != nil {
+				return err
+			}
+
+			cleanup = func() {}
+
+			return f.Close()
+		}()
+		if err != nil {
+			return fmt.Errorf("download interrupted: %v", err)
+		}
+
+		_, err = s.ChannelMessageSend(m.ChannelID, "download complete, transcode starting: "+urlStr)
+		if err != nil {
+			log.Err(err).
+				Msg("failed to send download done msg")
+		}
+
+		err = extractAudio(dstFilePath)
+		if err != nil {
+			return fmt.Errorf("failed to extract audio: %v", err)
+		}
+
+		// remove no longer useful raw video file
+		err = os.Remove(dstFilePath)
+		if err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("failed to remove cached video file: %s: %v", dstFilePath, err)
+		}
+
+		fi, err := os.OpenFile(downloadedRef, os.O_RDONLY|os.O_CREATE, 0666)
+		if err != nil {
+			return fmt.Errorf("failed to create download complete indicator: %v", err)
+		}
+		_ = fi.Close() // don't care about error here, just wanted to create the file and we did
+
+		_, err = s.ChannelMessageSend(m.ChannelID, "transcode complete, queuing: "+urlStr)
+		if err != nil {
+			log.Err(err).
+				Msg("failed to send download done msg")
+		}
+
+		play(p, urlStr, cacheDir)
+
+		return permit.Done()
 	}
 
-	_, err = s.ChannelMessageSend(m.ChannelID, "download complete, transcode starting: "+urlStr)
-	if err != nil {
-		log.Err(err).
-			Msg("failed to send download done msg")
-	}
-
-	err = extractAudio(dstFilePath)
-	if err != nil {
-		return fmt.Errorf("failed to extract audio: %v", err)
-	}
-
-	// remove no longer useful raw video file
-	err = os.Remove(dstFilePath)
-	if err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("failed to remove cached video file: %s: %v", dstFilePath, err)
-	}
-
-	fi, err := os.OpenFile(downloadedRef, os.O_RDONLY|os.O_CREATE, 0666)
-	if err != nil {
-		return fmt.Errorf("failed to create download complete indicator: %v", err)
-	}
-	_ = fi.Close() // don't care about error here, just wanted to create the file and we did
-
-	_, err = s.ChannelMessageSend(m.ChannelID, "transcode complete, queuing: "+urlStr)
-	if err != nil {
-		log.Err(err).
-			Msg("failed to send download done msg")
-	}
-
-	play(p, urlStr, cacheDir)
-
-	return permit.Done()
+	return n, m, h
 }
 
 func extractAudio(vidPath string) error {

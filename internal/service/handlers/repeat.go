@@ -1,22 +1,21 @@
 package handlers
 
 import (
-	"strings"
-
 	"github.com/bwmarrin/discordgo"
 	"github.com/josephcopenhaver/discord-bot/internal/service"
 )
 
-func Repeat(s *discordgo.Session, m *discordgo.MessageCreate, p *service.Player, handled *bool) error {
+func Repeat() (string, []string, func(*discordgo.Session, *discordgo.MessageCreate, *service.Player) error) {
 
-	if strings.TrimSpace(m.Message.Content) != "repeat" {
-		return nil
+	n := "repeat"
+	m := []string{"repeat"}
+	h := func(s *discordgo.Session, m *discordgo.MessageCreate, p *service.Player) error {
+
+		repeatMode := p.CycleRepeatMode()
+
+		_, err := s.ChannelMessageSend(m.ChannelID, "repeat mode is now: "+repeatMode)
+		return err
 	}
 
-	*handled = true
-
-	repeatMode := p.CycleRepeatMode()
-
-	_, err := s.ChannelMessageSend(m.ChannelID, "repeat mode is now: "+repeatMode)
-	return err
+	return n, m, h
 }

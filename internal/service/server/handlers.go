@@ -1,6 +1,9 @@
 package server
 
 import (
+	"regexp"
+	"strings"
+
 	"github.com/bwmarrin/discordgo"
 	"github.com/josephcopenhaver/discord-bot/internal/service"
 	"github.com/josephcopenhaver/discord-bot/internal/service/handlers"
@@ -13,29 +16,33 @@ func (s *Server) Handlers() error {
 
 	s.addMuxHandlers()
 
-	s.AddHandler("ping", handlers.Ping)
+	s.AddHandler(handlers.Ping)
 
-	s.AddHandler("join-channel", handlers.JoinChannel)
+	s.AddHandler(handlers.JoinChannel)
 
-	s.AddHandler("reset", handlers.Reset)
+	s.AddHandler(handlers.Reset)
 
-	s.AddHandler("play", handlers.Play)
+	s.AddHandler(handlers.Play)
 
-	s.AddHandler("resume", handlers.Resume) // also alias for play ( without args )
+	s.AddHandler(handlers.Resume) // also alias for play ( without args )
 
-	s.AddHandler("pause", handlers.Pause)
+	s.AddHandler(handlers.Pause)
 
-	s.AddHandler("stop", handlers.Stop)
+	s.AddHandler(handlers.Stop)
 
-	s.AddHandler("repeat", handlers.Repeat)
+	s.AddHandler(handlers.Repeat)
 
-	s.AddHandler("next", handlers.Next) // also alias for skip
+	s.AddHandler(handlers.Next) // also alias for skip
 
-	s.AddHandler("previous", handlers.Previous) // also alias for prev
+	s.AddHandler(handlers.Previous) // also alias for prev
 
-	s.AddHandler("restart-track", handlers.RestartTrack)
+	s.AddHandler(handlers.RestartTrack)
 
-	s.AddHandler("clear-playlist", handlers.ClearPlaylist)
+	s.AddHandler(handlers.ClearPlaylist)
+
+	s.AddHandler(handlers.Echo)
+
+	s.AddHandler(handlers.Help)
 
 	s.DiscordSession.AddHandler(func(s *discordgo.Session, v *discordgo.VoiceStateUpdate) {
 		// https://discord.com/developers/docs/topics/gateway#voice-state-update
@@ -73,35 +80,135 @@ func (s *Server) Handlers() error {
 
 type HandleMessageCreate struct {
 	Name    string
-	Handler func(*discordgo.Session, *discordgo.MessageCreate, *service.Player, *bool) error
+	Matcher func(string) (map[string]string, bool)
+	Handler func(*discordgo.Session, *discordgo.MessageCreate, *service.Player, map[string]string) error
 }
 
-func newHandleMessageCreate(name string, handler func(*discordgo.Session, *discordgo.MessageCreate, *service.Player, *bool) error) HandleMessageCreate {
+func newHandleMessageCreate(name string, matcher func(string) (map[string]string, bool), handler func(*discordgo.Session, *discordgo.MessageCreate, *service.Player, map[string]string) error) HandleMessageCreate {
 	return HandleMessageCreate{
 		Name:    name,
+		Matcher: matcher,
 		Handler: handler,
 	}
 }
 
 func (srv *Server) addMuxHandlers() {
 	srv.DiscordSession.AddHandler(func(s *discordgo.Session, m *discordgo.MessageCreate) {
+		var err error
 		var p *service.Player
-		var handled bool
 
 		// ignore messages I (the bot) create
 		if m.Author.ID == s.State.User.ID {
 			return
 		}
 
-		if m.GuildID != "" {
-			p = srv.Brain.Player(m.GuildID)
+		if m.GuildID == "" {
+			// TODO: handle bot-direct messages
+			return
+		}
+
+		p = srv.Brain.Player(m.GuildID)
+
+		trimMsg := strings.TrimSpace(m.Message.Content)
+		if !strings.HasPrefix(trimMsg, "<@") {
+			return
+		}
+
+		prefix := func() string {
+
+			prefix := s.State.User.Mention()
+			if strings.HasPrefix(trimMsg, prefix) {
+				return prefix
+			}
+
+			// log.Debug().
+			// 	Str("channel_message", trimMsg).
+			// 	Str("prefix", prefix).
+			// 	Str("mention", "user").
+			// 	Msg("no match")
+
+			member, err := s.State.Member(m.GuildID, s.State.User.ID)
+			if err != nil {
+				log.Err(err).
+					Msg("failed to get my own member status")
+				return ""
+			}
+
+			prefix = member.Mention()
+			if strings.HasPrefix(trimMsg, prefix) {
+				return prefix
+			}
+
+			// log.Debug().
+			// 	Str("channel_message", trimMsg).
+			// 	Str("prefix", prefix).
+			// 	Str("mention", "member").
+			// 	Msg("no match")
+
+			for _, roleId := range member.Roles {
+
+				r, err := s.State.Role(m.GuildID, roleId)
+				if err != nil {
+					log.Err(err).
+						Str("role_id", roleId).
+						Msg("failed to get role info")
+					continue
+				}
+
+				if r.Name != s.State.User.Username {
+					// log.Debug().
+					// 	Str("role_name", r.Name).
+					// 	Str("user_name", s.State.User.Username).
+					// 	Msg("role name does not match")
+					continue
+				}
+
+				prefix = r.Mention()
+				if strings.HasPrefix(trimMsg, prefix) {
+					return prefix
+				}
+
+				// log.Debug().
+				// 	Str("channel_message", trimMsg).
+				// 	Str("prefix", prefix).
+				// 	Str("mention", "role").
+				// 	Msg("no match")
+			}
+
+			return ""
+		}()
+
+		if prefix == "" {
+			// log.Debug().
+			// 	Str("channel_message", trimMsg).
+			// 	Msg("message not for me")
+			return
+		}
+
+		// get message without @bot directive
+		{
+			withoutMetion := trimMsg[len(prefix):]
+			newTrimMsg := strings.TrimSpace(withoutMetion)
+			if newTrimMsg == withoutMetion {
+				// log.Debug().
+				// 	Str("channel_message", trimMsg).
+				// 	Msg("not well formed for me")
+				return
+			}
+
+			trimMsg = newTrimMsg
 		}
 
 		for i := range srv.EventHandlers.MessageCreate {
 
 			h := &srv.EventHandlers.MessageCreate[i]
 
-			err := h.Handler(s, m, p, &handled)
+			args, matched := h.Matcher(trimMsg)
+			if !matched {
+				continue
+			}
+
+			err := h.Handler(s, m, p, args)
 			if err != nil {
 				log.Err(err).
 					Str("handler_name", h.Name).
@@ -120,17 +227,15 @@ func (srv *Server) addMuxHandlers() {
 				return
 			}
 
-			if handled {
-				log.Warn().
-					Str("handler_name", h.Name).
-					Str("author_id", m.Author.ID).
-					Str("author_username", m.Author.Username).
-					Str("message_content", m.Message.Content).
-					Interface("message_id", m.Message.ID).
-					Interface("message_timestamp", m.Message.Timestamp).
-					Msg("handled message")
-				return
-			}
+			log.Warn().
+				Str("handler_name", h.Name).
+				Str("author_id", m.Author.ID).
+				Str("author_username", m.Author.Username).
+				Str("message_content", m.Message.Content).
+				Interface("message_id", m.Message.ID).
+				Interface("message_timestamp", m.Message.Timestamp).
+				Msg("handled message")
+			return
 		}
 
 		log.Info().
@@ -141,7 +246,7 @@ func (srv *Server) addMuxHandlers() {
 			Interface("message_timestamp", m.Message.Timestamp).
 			Msg("unhandled message")
 
-		_, err := s.ChannelMessageSend(m.ChannelID, "command not recognized")
+		_, err = s.ChannelMessageSend(m.ChannelID, "command not recognized")
 		if err != nil {
 			log.Error().
 				Err(err).
@@ -150,18 +255,106 @@ func (srv *Server) addMuxHandlers() {
 	})
 }
 
-func (s *Server) AddHandler(name string, handler interface{}) {
-	switch h := handler.(type) {
-	case func(*discordgo.Session, *discordgo.MessageCreate, *bool) error:
-		w := func(s *discordgo.Session, m *discordgo.MessageCreate, p *service.Player, handled *bool) error {
-			return h(s, m, handled)
+func (s *Server) AddHandler(handleProvider interface{}) {
+
+	switch v := handleProvider.(type) {
+
+	//
+	// word based matchers
+	//
+
+	case func() (string, []string, func(*discordgo.Session, *discordgo.MessageCreate, *service.Player) error):
+		n, words, handler := v()
+		m := func(s string) (map[string]string, bool) {
+			s = strings.TrimSpace(s)
+
+			for _, w := range words {
+				if w == s {
+					return nil, true
+				}
+			}
+
+			return nil, false
 		}
-		s.EventHandlers.MessageCreate = append(s.EventHandlers.MessageCreate, newHandleMessageCreate(name, w))
-	case func(*discordgo.Session, *discordgo.MessageCreate, *service.Player, *bool) error:
-		s.EventHandlers.MessageCreate = append(s.EventHandlers.MessageCreate, newHandleMessageCreate(name, h))
+		h := func(s *discordgo.Session, m *discordgo.MessageCreate, p *service.Player, _ map[string]string) error {
+			return handler(s, m, p)
+		}
+		s.EventHandlers.MessageCreate = append(s.EventHandlers.MessageCreate, newHandleMessageCreate(n, m, h))
+	case func() (string, []string, func(*discordgo.Session, *discordgo.MessageCreate) error):
+		n, words, handler := v()
+		m := func(s string) (map[string]string, bool) {
+			s = strings.TrimSpace(s)
+
+			for _, w := range words {
+				if w == s {
+					return nil, true
+				}
+			}
+
+			return nil, false
+		}
+		h := func(s *discordgo.Session, m *discordgo.MessageCreate, _ *service.Player, _ map[string]string) error {
+			return handler(s, m)
+		}
+		s.EventHandlers.MessageCreate = append(s.EventHandlers.MessageCreate, newHandleMessageCreate(n, m, h))
+
+	//
+	// regex based matcher/extractors
+	//
+
+	case func() (string, *regexp.Regexp, func(*discordgo.Session, *discordgo.MessageCreate, *service.Player, map[string]string) error):
+		n, re, h := v()
+		m := func(s string) (map[string]string, bool) {
+
+			m := handlers.RegexMap(re, s)
+
+			return m, m != nil
+		}
+		s.EventHandlers.MessageCreate = append(s.EventHandlers.MessageCreate, newHandleMessageCreate(n, m, h))
+	case func() (string, *regexp.Regexp, func(*discordgo.Session, *discordgo.MessageCreate, *service.Player) error):
+		n, re, handler := v()
+		m := func(s string) (map[string]string, bool) {
+
+			m := handlers.RegexMap(re, s)
+
+			return nil, m != nil
+		}
+		h := func(s *discordgo.Session, m *discordgo.MessageCreate, p *service.Player, _ map[string]string) error {
+			return handler(s, m, p)
+		}
+		s.EventHandlers.MessageCreate = append(s.EventHandlers.MessageCreate, newHandleMessageCreate(n, m, h))
+	case func() (string, *regexp.Regexp, func(*discordgo.Session, *discordgo.MessageCreate, map[string]string) error):
+		n, re, handler := v()
+		m := func(s string) (map[string]string, bool) {
+
+			m := handlers.RegexMap(re, s)
+
+			return m, m != nil
+		}
+		h := func(s *discordgo.Session, m *discordgo.MessageCreate, _ *service.Player, args map[string]string) error {
+			return handler(s, m, args)
+		}
+		s.EventHandlers.MessageCreate = append(s.EventHandlers.MessageCreate, newHandleMessageCreate(n, m, h))
+	case func() (string, *regexp.Regexp, func(*discordgo.Session, *discordgo.MessageCreate) error):
+		n, re, handler := v()
+		m := func(s string) (map[string]string, bool) {
+
+			m := handlers.RegexMap(re, s)
+
+			return nil, m != nil
+		}
+		h := func(s *discordgo.Session, m *discordgo.MessageCreate, _ *service.Player, _ map[string]string) error {
+			return handler(s, m)
+		}
+		s.EventHandlers.MessageCreate = append(s.EventHandlers.MessageCreate, newHandleMessageCreate(n, m, h))
+
+	//
+	// no conversion rule
+	//
+
 	default:
 		log.Fatal().
-			Str("handler_name", name).
+			Interface("handle_provider", handleProvider).
 			Msg("code-error: failed to register handler")
 	}
 }

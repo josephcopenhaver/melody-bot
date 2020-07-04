@@ -1,19 +1,18 @@
 package handlers
 
 import (
-	"strings"
-
 	"github.com/bwmarrin/discordgo"
 )
 
-func Ping(s *discordgo.Session, m *discordgo.MessageCreate, handled *bool) error {
+func Ping() (string, []string, func(*discordgo.Session, *discordgo.MessageCreate) error) {
 
-	if strings.TrimSpace(m.Content) != "ping" {
-		return nil
+	n := "ping"
+	m := []string{"ping"}
+	h := func(s *discordgo.Session, m *discordgo.MessageCreate) error {
+
+		_, err := s.ChannelMessageSend(m.ChannelID, "pong, in reply to "+m.Message.Author.Mention())
+		return err
 	}
 
-	*handled = true
-
-	_, err := s.ChannelMessageSend(m.ChannelID, "pong")
-	return err
+	return n, m, h
 }

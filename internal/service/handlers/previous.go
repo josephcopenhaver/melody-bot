@@ -1,21 +1,20 @@
 package handlers
 
 import (
-	"strings"
-
 	"github.com/bwmarrin/discordgo"
 	"github.com/josephcopenhaver/discord-bot/internal/service"
 )
 
-func Previous(s *discordgo.Session, m *discordgo.MessageCreate, p *service.Player, handled *bool) error {
+func Previous() (string, []string, func(*discordgo.Session, *discordgo.MessageCreate, *service.Player) error) {
 
-	if strings.TrimSpace(m.Message.Content) != "previous" && strings.TrimSpace(m.Message.Content) != "prev" {
+	n := "previous"
+	m := []string{"previous", "prev"}
+	h := func(s *discordgo.Session, m *discordgo.MessageCreate, p *service.Player) error {
+
+		p.Previous()
+
 		return nil
 	}
 
-	*handled = true
-
-	p.Previous()
-
-	return nil
+	return n, m, h
 }

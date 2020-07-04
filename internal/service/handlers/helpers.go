@@ -1,8 +1,10 @@
 package handlers
 
-import "regexp"
+import (
+	"regexp"
+)
 
-func regexMap(r *regexp.Regexp, s string) map[string]string {
+func RegexMap(r *regexp.Regexp, s string) map[string]string {
 
 	args := r.FindStringSubmatch(s)
 	if args == nil {
