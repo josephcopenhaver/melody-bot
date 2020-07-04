@@ -3,29 +3,27 @@ package handlers
 import (
 	"regexp"
 
-	"github.com/rs/zerolog/log"
-
 	"github.com/bwmarrin/discordgo"
+	"github.com/josephcopenhaver/discord-bot/internal/service"
 )
 
-func Echo() (string, *regexp.Regexp, func(*discordgo.Session, *discordgo.MessageCreate, map[string]string) error) {
+func Echo() HandleMessageCreate {
 
-	n := "echo"
-	m := regexp.MustCompile(`^\s*echo\s+(?P<msg>[^\s]*?)\s*$`)
-	h := func(s *discordgo.Session, m *discordgo.MessageCreate, args map[string]string) error {
+	return newHandleMessageCreate("echo", newRegexMatcher(
+		regexp.MustCompile(`^\s*echo\s+(?P<msg>[^\s]*.*?)\s*$`),
+		func(s *discordgo.Session, m *discordgo.MessageCreate, _ *service.Player, args map[string]string) error {
 
-		msg := args["msg"]
-		if msg == "" {
-			return nil
-		}
+			msg := args["msg"]
+			if msg == "" {
+				return nil
+			}
 
-		log.Info().
-			Str("payload", msg).
-			Msg("echo")
+			// log.Debug().
+			// 	Str("payload", msg).
+			// 	Msg("echo")
 
-		_, err := s.ChannelMessageSend(m.ChannelID, msg)
-		return err
-	}
-
-	return n, m, h
+			_, err := s.ChannelMessageSend(m.ChannelID, msg)
+			return err
+		},
+	))
 }

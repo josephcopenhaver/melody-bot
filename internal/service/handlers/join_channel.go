@@ -11,43 +11,42 @@ import (
 
 // TODO: handle when a sysadmin moves the bot to another channel manually
 
-func JoinChannel() (string, *regexp.Regexp, func(*discordgo.Session, *discordgo.MessageCreate, *service.Player, map[string]string) error) {
+func JoinChannel() HandleMessageCreate {
 
-	n := "join-channel"
-	m := regexp.MustCompile(`^\s*join\s+(?P<channel_name>[^\s]+.*?)\s*$`)
-	h := func(s *discordgo.Session, m *discordgo.MessageCreate, p *service.Player, args map[string]string) error {
+	return newHandleMessageCreate("join-channel", newRegexMatcher(
+		regexp.MustCompile(`^\s*join\s+(?P<channel_name>[^\s]+.*?)\s*$`),
+		func(s *discordgo.Session, m *discordgo.MessageCreate, p *service.Player, args map[string]string) error {
 
-		channelName := args["channel_name"]
+			channelName := args["channel_name"]
 
-		if channelName == "" {
-			return nil
-		}
-
-		channels, err := s.GuildChannels(m.Message.GuildID)
-		if err != nil {
-			return err
-		}
-
-		for _, c := range channels {
-
-			if c.Type != discordgo.ChannelTypeGuildVoice || strings.TrimSpace(c.Name) != channelName {
-				continue
+			if channelName == "" {
+				return nil
 			}
 
-			mute := false
-			deaf := false
-
-			vc, err := s.ChannelVoiceJoin(c.GuildID, c.ID, mute, deaf)
+			channels, err := s.GuildChannels(m.Message.GuildID)
 			if err != nil {
 				return err
 			}
 
-			p.SetVoiceConnection(vc)
-			return nil
-		}
+			for _, c := range channels {
 
-		return errors.New("could not find channel")
-	}
+				if c.Type != discordgo.ChannelTypeGuildVoice || strings.TrimSpace(c.Name) != channelName {
+					continue
+				}
 
-	return n, m, h
+				mute := false
+				deaf := false
+
+				vc, err := s.ChannelVoiceJoin(c.GuildID, c.ID, mute, deaf)
+				if err != nil {
+					return err
+				}
+
+				p.SetVoiceConnection(m, vc)
+				return nil
+			}
+
+			return errors.New("could not find channel")
+		},
+	))
 }

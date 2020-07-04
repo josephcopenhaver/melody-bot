@@ -5,17 +5,16 @@ import (
 	"github.com/josephcopenhaver/discord-bot/internal/service"
 )
 
-func Repeat() (string, []string, func(*discordgo.Session, *discordgo.MessageCreate, *service.Player) error) {
+func Repeat() HandleMessageCreate {
 
-	n := "repeat"
-	m := []string{"repeat"}
-	h := func(s *discordgo.Session, m *discordgo.MessageCreate, p *service.Player) error {
+	return newHandleMessageCreate("repeat", newWordMatcher(
+		[]string{"repeat"},
+		func(s *discordgo.Session, m *discordgo.MessageCreate, p *service.Player, _ map[string]string) error {
 
-		repeatMode := p.CycleRepeatMode()
+			repeatMode := p.CycleRepeatMode(m)
 
-		_, err := s.ChannelMessageSend(m.ChannelID, "repeat mode is now: "+repeatMode)
-		return err
-	}
-
-	return n, m, h
+			_, err := s.ChannelMessageSend(m.ChannelID, "repeat mode is now: "+repeatMode)
+			return err
+		},
+	))
 }

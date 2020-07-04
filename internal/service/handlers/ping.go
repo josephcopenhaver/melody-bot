@@ -2,17 +2,17 @@ package handlers
 
 import (
 	"github.com/bwmarrin/discordgo"
+	"github.com/josephcopenhaver/discord-bot/internal/service"
 )
 
-func Ping() (string, []string, func(*discordgo.Session, *discordgo.MessageCreate) error) {
+func Ping() HandleMessageCreate {
 
-	n := "ping"
-	m := []string{"ping"}
-	h := func(s *discordgo.Session, m *discordgo.MessageCreate) error {
+	return newHandleMessageCreate("ping", newWordMatcher(
+		[]string{"ping"},
+		func(s *discordgo.Session, m *discordgo.MessageCreate, _ *service.Player, _ map[string]string) error {
 
-		_, err := s.ChannelMessageSend(m.ChannelID, "pong, in reply to "+m.Message.Author.Mention())
-		return err
-	}
-
-	return n, m, h
+			_, err := s.ChannelMessageSend(m.ChannelID, "pong, in reply to "+m.Message.Author.Mention())
+			return err
+		},
+	))
 }

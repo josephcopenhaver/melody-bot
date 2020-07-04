@@ -5,16 +5,15 @@ import (
 	"github.com/josephcopenhaver/discord-bot/internal/service"
 )
 
-func Pause() (string, []string, func(*discordgo.Session, *discordgo.MessageCreate, *service.Player) error) {
+func Pause() HandleMessageCreate {
 
-	n := "pause"
-	m := []string{"pause"}
-	h := func(s *discordgo.Session, m *discordgo.MessageCreate, p *service.Player) error {
+	return newHandleMessageCreate("pause", newWordMatcher(
+		[]string{"pause"},
+		func(s *discordgo.Session, m *discordgo.MessageCreate, p *service.Player, _ map[string]string) error {
 
-		p.Pause()
+			p.Pause(m)
 
-		return nil
-	}
-
-	return n, m, h
+			return nil
+		},
+	))
 }

@@ -1,7 +1,6 @@
 package server
 
 import (
-	"regexp"
 	"strings"
 
 	"github.com/bwmarrin/discordgo"
@@ -16,33 +15,33 @@ func (s *Server) Handlers() error {
 
 	s.addMuxHandlers()
 
-	s.AddHandler(handlers.Ping)
+	s.AddHandler(handlers.Ping())
 
-	s.AddHandler(handlers.JoinChannel)
+	s.AddHandler(handlers.JoinChannel())
 
-	s.AddHandler(handlers.Reset)
+	s.AddHandler(handlers.Reset())
 
-	s.AddHandler(handlers.Play)
+	s.AddHandler(handlers.Play())
 
-	s.AddHandler(handlers.Resume) // also alias for play ( without args )
+	s.AddHandler(handlers.Resume()) // also alias for play ( without args )
 
-	s.AddHandler(handlers.Pause)
+	s.AddHandler(handlers.Pause())
 
-	s.AddHandler(handlers.Stop)
+	s.AddHandler(handlers.Stop())
 
-	s.AddHandler(handlers.Repeat)
+	s.AddHandler(handlers.Repeat())
 
-	s.AddHandler(handlers.Next) // also alias for skip
+	s.AddHandler(handlers.Next()) // also alias for skip
 
-	s.AddHandler(handlers.Previous) // also alias for prev
+	s.AddHandler(handlers.Previous()) // also alias for prev
 
-	s.AddHandler(handlers.RestartTrack)
+	s.AddHandler(handlers.RestartTrack())
 
-	s.AddHandler(handlers.ClearPlaylist)
+	s.AddHandler(handlers.ClearPlaylist())
 
-	s.AddHandler(handlers.Echo)
+	s.AddHandler(handlers.Echo())
 
-	s.AddHandler(handlers.Help)
+	s.AddHandler(handlers.Help())
 
 	s.DiscordSession.AddHandler(func(s *discordgo.Session, v *discordgo.VoiceStateUpdate) {
 		// https://discord.com/developers/docs/topics/gateway#voice-state-update
@@ -76,20 +75,6 @@ func (s *Server) Handlers() error {
 	})
 
 	return nil
-}
-
-type HandleMessageCreate struct {
-	Name    string
-	Matcher func(string) (map[string]string, bool)
-	Handler func(*discordgo.Session, *discordgo.MessageCreate, *service.Player, map[string]string) error
-}
-
-func newHandleMessageCreate(name string, matcher func(string) (map[string]string, bool), handler func(*discordgo.Session, *discordgo.MessageCreate, *service.Player, map[string]string) error) HandleMessageCreate {
-	return HandleMessageCreate{
-		Name:    name,
-		Matcher: matcher,
-		Handler: handler,
-	}
 }
 
 func (srv *Server) addMuxHandlers() {
@@ -203,12 +188,12 @@ func (srv *Server) addMuxHandlers() {
 
 			h := &srv.EventHandlers.MessageCreate[i]
 
-			args, matched := h.Matcher(trimMsg)
-			if !matched {
+			handler := h.Matcher(trimMsg)
+			if handler == nil {
 				continue
 			}
 
-			err := h.Handler(s, m, p, args)
+			err := handler(s, m, p)
 			if err != nil {
 				log.Err(err).
 					Str("handler_name", h.Name).
@@ -255,106 +240,16 @@ func (srv *Server) addMuxHandlers() {
 	})
 }
 
-func (s *Server) AddHandler(handleProvider interface{}) {
+func (s *Server) AddHandler(v interface{}) {
 
-	switch v := handleProvider.(type) {
+	switch h := v.(type) {
 
-	//
-	// word based matchers
-	//
-
-	case func() (string, []string, func(*discordgo.Session, *discordgo.MessageCreate, *service.Player) error):
-		n, words, handler := v()
-		m := func(s string) (map[string]string, bool) {
-			s = strings.TrimSpace(s)
-
-			for _, w := range words {
-				if w == s {
-					return nil, true
-				}
-			}
-
-			return nil, false
-		}
-		h := func(s *discordgo.Session, m *discordgo.MessageCreate, p *service.Player, _ map[string]string) error {
-			return handler(s, m, p)
-		}
-		s.EventHandlers.MessageCreate = append(s.EventHandlers.MessageCreate, newHandleMessageCreate(n, m, h))
-	case func() (string, []string, func(*discordgo.Session, *discordgo.MessageCreate) error):
-		n, words, handler := v()
-		m := func(s string) (map[string]string, bool) {
-			s = strings.TrimSpace(s)
-
-			for _, w := range words {
-				if w == s {
-					return nil, true
-				}
-			}
-
-			return nil, false
-		}
-		h := func(s *discordgo.Session, m *discordgo.MessageCreate, _ *service.Player, _ map[string]string) error {
-			return handler(s, m)
-		}
-		s.EventHandlers.MessageCreate = append(s.EventHandlers.MessageCreate, newHandleMessageCreate(n, m, h))
-
-	//
-	// regex based matcher/extractors
-	//
-
-	case func() (string, *regexp.Regexp, func(*discordgo.Session, *discordgo.MessageCreate, *service.Player, map[string]string) error):
-		n, re, h := v()
-		m := func(s string) (map[string]string, bool) {
-
-			m := handlers.RegexMap(re, s)
-
-			return m, m != nil
-		}
-		s.EventHandlers.MessageCreate = append(s.EventHandlers.MessageCreate, newHandleMessageCreate(n, m, h))
-	case func() (string, *regexp.Regexp, func(*discordgo.Session, *discordgo.MessageCreate, *service.Player) error):
-		n, re, handler := v()
-		m := func(s string) (map[string]string, bool) {
-
-			m := handlers.RegexMap(re, s)
-
-			return nil, m != nil
-		}
-		h := func(s *discordgo.Session, m *discordgo.MessageCreate, p *service.Player, _ map[string]string) error {
-			return handler(s, m, p)
-		}
-		s.EventHandlers.MessageCreate = append(s.EventHandlers.MessageCreate, newHandleMessageCreate(n, m, h))
-	case func() (string, *regexp.Regexp, func(*discordgo.Session, *discordgo.MessageCreate, map[string]string) error):
-		n, re, handler := v()
-		m := func(s string) (map[string]string, bool) {
-
-			m := handlers.RegexMap(re, s)
-
-			return m, m != nil
-		}
-		h := func(s *discordgo.Session, m *discordgo.MessageCreate, _ *service.Player, args map[string]string) error {
-			return handler(s, m, args)
-		}
-		s.EventHandlers.MessageCreate = append(s.EventHandlers.MessageCreate, newHandleMessageCreate(n, m, h))
-	case func() (string, *regexp.Regexp, func(*discordgo.Session, *discordgo.MessageCreate) error):
-		n, re, handler := v()
-		m := func(s string) (map[string]string, bool) {
-
-			m := handlers.RegexMap(re, s)
-
-			return nil, m != nil
-		}
-		h := func(s *discordgo.Session, m *discordgo.MessageCreate, _ *service.Player, _ map[string]string) error {
-			return handler(s, m)
-		}
-		s.EventHandlers.MessageCreate = append(s.EventHandlers.MessageCreate, newHandleMessageCreate(n, m, h))
-
-	//
-	// no conversion rule
-	//
+	case handlers.HandleMessageCreate:
+		s.EventHandlers.MessageCreate = append(s.EventHandlers.MessageCreate, h)
 
 	default:
 		log.Fatal().
-			Interface("handle_provider", handleProvider).
+			Interface("handler", v).
 			Msg("code-error: failed to register handler")
 	}
 }

@@ -14,4 +14,4 @@
 - [ ] when @msg the bot from a specific text channel, support bringing them to the target channel logically
 - [ ] when @msg the bot in a public channel, messages in public channel should indicate who issued the command
 - [ ] when direct message the bot, echo results back to the user, but also log playback activity to the "target logical log channel"
-- [ ] handler providers should return a struct rather than a function of components, this way we can use interfaces and simplfy the hander.go code
+- [x] handler providers should return a struct rather than a function of components, this way we can use interfaces and simplfy the hander.go code

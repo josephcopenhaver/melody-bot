@@ -7,11 +7,12 @@ import (
 
 	"github.com/bwmarrin/discordgo"
 	"github.com/josephcopenhaver/discord-bot/internal/service"
+	"github.com/josephcopenhaver/discord-bot/internal/service/handlers"
 	"github.com/rs/zerolog/log"
 )
 
 type EventHandlers struct {
-	MessageCreate []HandleMessageCreate
+	MessageCreate []handlers.HandleMessageCreate
 }
 
 type Server struct {
@@ -23,7 +24,7 @@ type Server struct {
 func New() *Server {
 	return &Server{
 		EventHandlers: EventHandlers{
-			MessageCreate: []HandleMessageCreate{},
+			MessageCreate: []handlers.HandleMessageCreate{},
 		},
 		Brain: service.NewBrain(),
 	}

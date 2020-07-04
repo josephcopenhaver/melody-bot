@@ -5,16 +5,15 @@ import (
 	"github.com/josephcopenhaver/discord-bot/internal/service"
 )
 
-func Resume() (string, []string, func(*discordgo.Session, *discordgo.MessageCreate, *service.Player) error) {
+func Resume() HandleMessageCreate {
 
-	n := "resume"
-	m := []string{"resume"}
-	h := func(s *discordgo.Session, m *discordgo.MessageCreate, p *service.Player) error {
+	return newHandleMessageCreate("resume", newWordMatcher(
+		[]string{"resume"},
+		func(s *discordgo.Session, m *discordgo.MessageCreate, p *service.Player, _ map[string]string) error {
 
-		p.Resume()
+			p.Resume(m)
 
-		return nil
-	}
-
-	return n, m, h
+			return nil
+		},
+	))
 }

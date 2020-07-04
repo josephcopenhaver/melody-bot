@@ -143,16 +143,21 @@ func (m *PlayerMemory) play(s State) {
 	}
 }
 
+type TracedSignal struct {
+	src interface{}
+	sig Signal
+}
+
 type Player struct {
 	mutex      sync.RWMutex
 	memory     atomic.Value
-	signalChan chan Signal
+	signalChan chan TracedSignal
 }
 
 func NewPlayer(guildId string) *Player {
 
 	p := &Player{
-		signalChan: make(chan Signal, 1),
+		signalChan: make(chan TracedSignal, 1),
 	}
 
 	playRequests := make(chan *playRequest, 1)
@@ -245,9 +250,9 @@ func (p *Player) withMemory(f func(m *PlayerMemory)) {
 	})
 }
 
-func (p *Player) Reset() {
+func (p *Player) Reset(srcEvt interface{}) {
 
-	p.signalChan <- SignalReset
+	p.signalChan <- TracedSignal{srcEvt, SignalReset}
 }
 
 func (p *Player) reset() {
@@ -274,32 +279,32 @@ func (p *Player) previousTrack() {
 	})
 }
 
-func (p *Player) Pause() {
+func (p *Player) Pause(srcEvt interface{}) {
 
-	p.signalChan <- SignalPause
+	p.signalChan <- TracedSignal{srcEvt, SignalPause}
 }
 
-func (p *Player) Stop() {
+func (p *Player) Stop(srcEvt interface{}) {
 
-	p.signalChan <- SignalStop
+	p.signalChan <- TracedSignal{srcEvt, SignalStop}
 }
 
-func (p *Player) Resume() {
+func (p *Player) Resume(srcEvt interface{}) {
 
-	p.signalChan <- SignalResume
+	p.signalChan <- TracedSignal{srcEvt, SignalResume}
 }
 
-func (p *Player) Next() {
+func (p *Player) Next(srcEvt interface{}) {
 
-	p.signalChan <- SignalNext
+	p.signalChan <- TracedSignal{srcEvt, SignalNext}
 }
 
-func (p *Player) Previous() {
+func (p *Player) Previous(srcEvt interface{}) {
 
-	p.signalChan <- SignalPrevious
+	p.signalChan <- TracedSignal{srcEvt, SignalPrevious}
 }
 
-func (p *Player) CycleRepeatMode() string {
+func (p *Player) CycleRepeatMode(srcEvt interface{}) string {
 	var result string
 
 	p.withMemory(func(m *PlayerMemory) {
@@ -315,7 +320,7 @@ func (p *Player) CycleRepeatMode() string {
 	return result
 }
 
-func (p *Player) Play(url string, file string) bool {
+func (p *Player) Play(srcEvt interface{}, url string, file string) bool {
 	var result bool
 
 	p.withMemory(func(m *PlayerMemory) {
@@ -327,24 +332,24 @@ func (p *Player) Play(url string, file string) bool {
 			},
 		}
 
-		p.signalChan <- SignalPlay
+		p.signalChan <- TracedSignal{srcEvt, SignalPlay}
 
 	})
 
 	return result
 }
 
-func (p *Player) SetVoiceConnection(c *discordgo.VoiceConnection) {
+func (p *Player) SetVoiceConnection(srcEvt interface{}, c *discordgo.VoiceConnection) {
 
 	p.withMemory(func(m *PlayerMemory) {
 
 		m.voiceConnection = c
 	})
 
-	p.signalChan <- SignalNewVoiceConnection
+	p.signalChan <- TracedSignal{srcEvt, SignalNewVoiceConnection}
 }
 
-func (p *Player) ClearPlaylist() {
+func (p *Player) ClearPlaylist(srcEvt interface{}) {
 
 	p.withMemory(func(m *PlayerMemory) {
 
@@ -352,9 +357,9 @@ func (p *Player) ClearPlaylist() {
 	})
 }
 
-func (p *Player) RestartTrack() {
+func (p *Player) RestartTrack(srcEvt interface{}) {
 
-	p.signalChan <- SignalRestartTrack
+	p.signalChan <- TracedSignal{srcEvt, SignalRestartTrack}
 }
 
 func (p *Player) sendChannel(debug func() *zerolog.Event) chan<- []byte {
@@ -390,7 +395,7 @@ func (p *Player) sendChannel(debug func() *zerolog.Event) chan<- []byte {
 	return result
 }
 
-func playerWorker(p *Player, guildId string, sigChan <-chan Signal) {
+func playerWorker(p *Player, guildId string, sigChan <-chan TracedSignal) {
 
 	state := StateDefault
 	niceness := 19
@@ -443,7 +448,7 @@ func playerWorker(p *Player, guildId string, sigChan <-chan Signal) {
 	}
 }
 
-func playerMainLoop(p *Player, statePtr *State, debug func() *zerolog.Event, setNiceness func(int) error, sigChan <-chan Signal) error {
+func playerMainLoop(p *Player, statePtr *State, debug func() *zerolog.Event, setNiceness func(int) error, sigChan <-chan TracedSignal) error {
 	var err error
 	var sendChan chan<- []byte
 
@@ -458,7 +463,7 @@ func playerMainLoop(p *Player, statePtr *State, debug func() *zerolog.Event, set
 
 		debug().Msg("player: got signal before playing track")
 
-		switch s {
+		switch s.sig {
 		case SignalNewVoiceConnection:
 			sendChan = nil
 		case SignalPlay:
@@ -480,7 +485,7 @@ func playerMainLoop(p *Player, statePtr *State, debug func() *zerolog.Event, set
 
 		debug().Msg("player: got signal before playing track")
 
-		switch s {
+		switch s.sig {
 		case SignalNewVoiceConnection:
 			sendChan = nil
 		case SignalPlay:
@@ -560,7 +565,7 @@ func playerMainLoop(p *Player, statePtr *State, debug func() *zerolog.Event, set
 		// type: non-blocking
 		// signals recognized when in playing state
 		case s := <-sigChan:
-			switch s {
+			switch s.sig {
 			case SignalNewVoiceConnection:
 				sendChan = p.sendChannel(debug)
 				if sendChan == nil {
@@ -600,7 +605,7 @@ func playerMainLoop(p *Player, statePtr *State, debug func() *zerolog.Event, set
 					// type: blocking
 					// signals recognized when in paused state
 					s := <-sigChan
-					switch s {
+					switch s.sig {
 					case SignalNewVoiceConnection:
 						sendChan = nil
 					case SignalPlay:

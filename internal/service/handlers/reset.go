@@ -5,16 +5,15 @@ import (
 	"github.com/josephcopenhaver/discord-bot/internal/service"
 )
 
-func Reset() (string, []string, func(*discordgo.Session, *discordgo.MessageCreate, *service.Player) error) {
+func Reset() HandleMessageCreate {
 
-	n := "reset"
-	m := []string{"reset"}
-	h := func(s *discordgo.Session, m *discordgo.MessageCreate, p *service.Player) error {
+	return newHandleMessageCreate("reset", newWordMatcher(
+		[]string{"reset"},
+		func(s *discordgo.Session, m *discordgo.MessageCreate, p *service.Player, _ map[string]string) error {
 
-		p.Reset()
+			p.Reset(m)
 
-		return nil
-	}
-
-	return n, m, h
+			return nil
+		},
+	))
 }

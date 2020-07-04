@@ -5,16 +5,15 @@ import (
 	"github.com/josephcopenhaver/discord-bot/internal/service"
 )
 
-func Previous() (string, []string, func(*discordgo.Session, *discordgo.MessageCreate, *service.Player) error) {
+func Previous() HandleMessageCreate {
 
-	n := "previous"
-	m := []string{"previous", "prev"}
-	h := func(s *discordgo.Session, m *discordgo.MessageCreate, p *service.Player) error {
+	return newHandleMessageCreate("previous", newWordMatcher(
+		[]string{"previous", "prev"},
+		func(s *discordgo.Session, m *discordgo.MessageCreate, p *service.Player, _ map[string]string) error {
 
-		p.Previous()
+			p.Previous(m)
 
-		return nil
-	}
-
-	return n, m, h
+			return nil
+		},
+	))
 }
