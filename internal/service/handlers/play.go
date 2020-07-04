@@ -11,6 +11,8 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
+	"sync/atomic"
 
 	"github.com/rs/zerolog/log"
 
@@ -28,10 +30,135 @@ const (
 
 // TODO: download raw video to tmp subfolder
 
-var rePlay = regexp.MustCompile(`^\s*play\s+(?P<url>[^\s]+.*?)\s*$`)
+type playWorkPermit struct {
+	mutex            sync.Mutex
+	acquired         bool
+	responseRecorded int32
+	onPass           func()
+	onFail           func()
+}
 
-// TODO: lock a file for prcoessing by a thread
-// but automatically release the lock if the process explodes
+func (w *playWorkPermit) Acquired() bool {
+	return w.acquired
+}
+
+func (w *playWorkPermit) Done() {
+	if !w.acquired {
+		return
+	}
+
+	w.mutex.Lock()
+	defer w.mutex.Unlock()
+
+	if atomic.LoadInt32(&w.responseRecorded) != 0 {
+		return
+	}
+	atomic.StoreInt32(&w.responseRecorded, 1)
+
+	w.onPass()
+}
+
+func (w *playWorkPermit) Fail() {
+	if !w.acquired {
+		return
+	}
+
+	w.mutex.Lock()
+	defer w.mutex.Unlock()
+
+	if atomic.LoadInt32(&w.responseRecorded) != 0 {
+		return
+	}
+	atomic.StoreInt32(&w.responseRecorded, 1)
+
+	w.onFail()
+}
+
+// playAcquireWorkPermit
+// fetch a work permit for a given work id
+//
+// the worker can defer to a verifyJobDone function to force the acquisition of a permit
+// if the job is indeed not done ( when verifyJobDone returns false )
+var playAcquireWorkPermit = func() func(string, func() (bool, error)) (*playWorkPermit, error) {
+
+	mutex := &sync.Mutex{}
+	workRegistry := &sync.Map{}
+
+	onPass := func(key string) func() {
+		return func() {
+			mutex.Lock()
+			defer mutex.Unlock()
+
+			workRegistry.Store(key, int8(0))
+		}
+	}
+
+	onFail := func(key string) func() {
+		return func() {
+			mutex.Lock()
+			defer mutex.Unlock()
+
+			workRegistry.Store(key, int8(1))
+		}
+	}
+
+	return func(id string, verifyJobDone func() (bool, error)) (*playWorkPermit, error) {
+		mutex.Lock()
+		defer mutex.Unlock()
+
+		v, ok := workRegistry.Load(id)
+		if ok {
+			status, _ := v.(int8)
+
+			if status == -1 {
+				// in progress
+				return &playWorkPermit{
+					responseRecorded: 1,
+				}, nil
+			} else if status == 1 {
+				// failed
+				return &playWorkPermit{
+					acquired: true,
+					onPass:   onPass(id),
+					onFail:   onFail(id),
+				}, nil
+			} else if status == 0 {
+				// completed
+
+				verifiedComplete, err := verifyJobDone()
+				if err != nil {
+					return nil, err
+				}
+
+				if !verifiedComplete {
+					workRegistry.Store(id, int8(-1))
+					return &playWorkPermit{
+						acquired: true,
+						onPass:   onPass(id),
+						onFail:   onFail(id),
+					}, nil
+				} else {
+					return &playWorkPermit{
+						acquired:         true,
+						responseRecorded: 1,
+					}, nil
+				}
+			}
+
+			return nil, nil
+		}
+
+		workRegistry.Store(id, int8(-1))
+
+		return &playWorkPermit{
+			acquired: true,
+			onPass:   onPass(id),
+			onFail:   onFail(id),
+		}, nil
+	}
+}()
+
+var rePlay = regexp.MustCompile(`^\s*play\s+(?P<url>[^\s]+.*?)\s*$`)
 
 func Play(s *discordgo.Session, m *discordgo.MessageCreate, p *service.Player, handled *bool) error {
 
@@ -83,22 +210,49 @@ func Play(s *discordgo.Session, m *discordgo.MessageCreate, p *service.Player, h
 		return fmt.Errorf("failed to make cache directory: %s: %v", cacheDir, err)
 	}
 
-	// if already downloaded, short circuit
-	_, err = os.Stat(downloadedRef)
-	if err != nil {
-		if !os.IsNotExist(err) {
-			return fmt.Errorf("failed to read file system: %v", err)
-		}
-	} else {
+	verifyCacheEntry := func() (bool, error) {
 
-		_, err = s.ChannelMessageSend(m.ChannelID, "download skipped, cached: "+urlStr)
+		_, err := os.Stat(downloadedRef)
 		if err != nil {
-			log.Err(err).
-				Msg("failed to send play from cache confirmation")
+			if !os.IsNotExist(err) {
+				return false, fmt.Errorf("failed to read file system: %v", err)
+			}
+
+			return false, nil
 		}
 
-		play(p, urlStr, cacheDir)
-		return nil
+		return true, nil
+	}
+
+	permit, err := playAcquireWorkPermit(vidInfo.ID, verifyCacheEntry)
+	if err != nil {
+		return err
+	}
+	if !permit.Acquired() {
+		return fmt.Errorf("media already processing: %s", urlStr)
+	}
+	defer permit.Fail()
+
+	// short circuit if cached result exists
+	{
+		ok, err := verifyCacheEntry()
+		if err != nil {
+			return err
+		}
+
+		if ok {
+			_, err = s.ChannelMessageSend(m.ChannelID, "download skipped, cached: "+urlStr)
+			if err != nil {
+				log.Err(err).
+					Msg("failed to send play from cache confirmation")
+			}
+
+			play(p, urlStr, cacheDir)
+
+			permit.Done()
+
+			return nil
+		}
 	}
 
 	_, err = s.ChannelMessageSend(m.ChannelID, "downloading audio file: "+urlStr)
@@ -193,6 +347,8 @@ func Play(s *discordgo.Session, m *discordgo.MessageCreate, p *service.Player, h
 	}
 
 	play(p, urlStr, cacheDir)
+
+	permit.Done()
 	return nil
 }
 

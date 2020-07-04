@@ -7,9 +7,24 @@ import (
 	"io"
 	"os"
 
+	"github.com/josephcopenhaver/discord-bot/internal/logging"
 	"github.com/josephcopenhaver/discord-bot/internal/service"
 	"github.com/rs/zerolog/log"
 )
+
+func init() {
+
+	logLevelStr := os.Getenv("LOG_LEVEL")
+	if logLevelStr == "" {
+		return
+	}
+
+	if err := logging.SetGlobalLevel(logLevelStr); err != nil {
+		log.Fatal().
+			Str("LOG_LEVEL", logLevelStr).
+			Msg("invalid log level")
+	}
+}
 
 func main() {
 	var inputFile, outputFile string

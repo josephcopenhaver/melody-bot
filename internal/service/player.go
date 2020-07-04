@@ -13,7 +13,7 @@ import (
 	"github.com/bwmarrin/discordgo"
 )
 
-// Signal: a command that can be send to the player
+// Signal: a command that can be sent to the player
 type Signal int8
 
 const (
@@ -543,7 +543,7 @@ func playerMainLoop(p *Player, statePtr *State, debug func() *zerolog.Event, set
 	}
 	defer f.Close()
 
-	// read packets from file and buffer then to send to broadcast channel
+	// read packets from file and buffer them to send to broadcast channel
 
 	opusReader := NewOpusReader(f)
 	outPackets := [NumPacketBuffers][SampleMaxBytes]byte{}
@@ -673,6 +673,4 @@ func playerMainLoop(p *Player, statePtr *State, debug func() *zerolog.Event, set
 			outPacketIdx = 0
 		}
 	}
-
-	return nil
 }
