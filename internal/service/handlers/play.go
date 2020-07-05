@@ -26,7 +26,7 @@ const (
 	AudioFileName = "audio.discord-opus"
 )
 
-// TODO: handle voice channel reconnects forced by the server
+// TODO: handle voice channel reconnects forced by the server, specifically when forced into a channel where no one is present
 
 // TODO: download raw video to tmp subfolder
 
@@ -486,5 +486,5 @@ func play(p *service.Player, m *discordgo.MessageCreate, url string, cacheDir st
 
 	audioFile := path.Join(cacheDir, AudioFileName)
 
-	p.Play(m, url, audioFile)
+	p.Play(m, url, m.Message.Author.ID, m.Author.Mention(), audioFile)
 }

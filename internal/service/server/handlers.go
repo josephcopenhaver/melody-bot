@@ -41,10 +41,12 @@ func (s *Server) Handlers() error {
 
 	s.AddHandler(handlers.Echo())
 
+	s.AddHandler(handlers.SetTextChannel())
+
 	s.DiscordSession.AddHandler(func(s *discordgo.Session, v *discordgo.VoiceStateUpdate) {
 		// https://discord.com/developers/docs/topics/gateway#voice-state-update
 		// Sent when someone joins/leaves/moves voice channels. Inner payload is a voice state object.
-		log.Warn().
+		log.Debug().
 			Interface("payload", v).
 			Msg("event: voice state update")
 
@@ -55,7 +57,7 @@ func (s *Server) Handlers() error {
 	s.DiscordSession.AddHandler(func(s *discordgo.Session, v *discordgo.GuildDelete) {
 		// https://discord.com/developers/docs/topics/gateway#guild-delete
 		// Sent when a guild becomes unavailable during a guild outage, or when the user leaves or is removed from a guild. The inner payload is an unavailable guild object. If the unavailable field is not set, the user was removed from the guild.
-		log.Warn().
+		log.Debug().
 			Interface("payload", v).
 			Msg("event: guild delete")
 
@@ -65,7 +67,7 @@ func (s *Server) Handlers() error {
 	s.DiscordSession.AddHandler(func(s *discordgo.Session, v *discordgo.ChannelDelete) {
 		// https://discord.com/developers/docs/topics/gateway#channel-delete
 		// Sent when a channel relevant to the current user is deleted. The inner payload is a channel object.
-		log.Warn().
+		log.Debug().
 			Interface("payload", v).
 			Msg("event: channel delete")
 
@@ -92,7 +94,7 @@ func (srv *Server) addMuxHandlers() {
 
 		if m.GuildID != "" {
 
-			p = srv.Brain.Player(m.GuildID)
+			p = srv.Brain.Player(s, m.GuildID)
 
 			// verify the user is giving me a direct command in a guild channel
 			// if so then run handlers
@@ -215,24 +217,24 @@ func (srv *Server) addMuxHandlers() {
 				return
 			}
 
-			log.Warn().
-				Str("handler_name", h.Name).
-				Str("author_id", m.Author.ID).
-				Str("author_username", m.Author.Username).
-				Str("message_content", m.Message.Content).
-				Interface("message_id", m.Message.ID).
-				Interface("message_timestamp", m.Message.Timestamp).
-				Msg("handled message")
+			// log.Info().
+			// 	Str("handler_name", h.Name).
+			// 	Str("author_id", m.Author.ID).
+			// 	Str("author_username", m.Author.Username).
+			// 	Str("message_content", m.Message.Content).
+			// 	Interface("message_id", m.Message.ID).
+			// 	Interface("message_timestamp", m.Message.Timestamp).
+			// 	Msg("handled message")
 			return
 		}
 
-		log.Info().
-			Str("author_id", m.Author.ID).
-			Str("author_username", m.Author.Username).
-			Str("message_content", m.Message.Content).
-			Interface("message_id", m.Message.ID).
-			Interface("message_timestamp", m.Message.Timestamp).
-			Msg("unhandled message")
+		// log.Debug().
+		// 	Str("author_id", m.Author.ID).
+		// 	Str("author_username", m.Author.Username).
+		// 	Str("message_content", m.Message.Content).
+		// 	Interface("message_id", m.Message.ID).
+		// 	Interface("message_timestamp", m.Message.Timestamp).
+		// 	Msg("unhandled message")
 
 		_, err = s.ChannelMessageSend(m.ChannelID, "command not recognized")
 		if err != nil {

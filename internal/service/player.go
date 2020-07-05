@@ -69,8 +69,10 @@ func (s State) String() string {
 }
 
 type track struct {
-	url       string
-	audioFile string
+	url           string
+	audioFile     string
+	authorId      string
+	authorMention string
 }
 
 type playRequest struct {
@@ -81,9 +83,9 @@ type PlayerMemory struct {
 	voiceConnection *discordgo.VoiceConnection
 	notLooping      bool
 	currentTrackIdx int
-	// logChannelId *string // TODO: make this a thing
-	tracks       []track
-	playRequests chan *playRequest
+	textChannel     string
+	tracks          []track
+	playRequests    chan *playRequest
 }
 
 func (m *PlayerMemory) reset() {
@@ -149,15 +151,17 @@ type TracedSignal struct {
 }
 
 type Player struct {
-	mutex      sync.RWMutex
-	memory     atomic.Value
-	signalChan chan TracedSignal
+	mutex          sync.RWMutex
+	memory         atomic.Value
+	discordSession *discordgo.Session
+	signalChan     chan TracedSignal
 }
 
-func NewPlayer(guildId string) *Player {
+func NewPlayer(s *discordgo.Session, guildId string) *Player {
 
 	p := &Player{
-		signalChan: make(chan TracedSignal, 1),
+		discordSession: s,
+		signalChan:     make(chan TracedSignal, 1),
 	}
 
 	playRequests := make(chan *playRequest, 1)
@@ -320,15 +324,17 @@ func (p *Player) CycleRepeatMode(srcEvt interface{}) string {
 	return result
 }
 
-func (p *Player) Play(srcEvt interface{}, url string, file string) bool {
+func (p *Player) Play(srcEvt interface{}, url string, authorId, authorMention string, file string) bool {
 	var result bool
 
 	p.withMemory(func(m *PlayerMemory) {
 
 		m.playRequests <- &playRequest{
 			track: &track{
-				url:       url,
-				audioFile: file,
+				url:           url,
+				audioFile:     file,
+				authorId:      authorId,
+				authorMention: authorMention,
 			},
 		}
 
@@ -362,6 +368,61 @@ func (p *Player) RestartTrack(srcEvt interface{}) {
 	p.signalChan <- TracedSignal{srcEvt, SignalRestartTrack}
 }
 
+func (p *Player) SetTextChannel(s string) {
+	p.withMemory(func(m *PlayerMemory) {
+		m.textChannel = s
+	})
+
+	p.broadcastTextMessage(nil, "text channel is now this one")
+}
+
+func (p *Player) setDefaultTextChannel(v interface{}) {
+
+	switch e := v.(type) {
+	case *discordgo.MessageCreate:
+		if e == nil {
+			return
+		}
+
+		p.SetTextChannel(e.Message.ChannelID)
+	default:
+		if v == nil {
+			return
+		}
+
+		log.Error().
+			Msg("failed to get text channel from first event sent to player")
+	}
+}
+
+func (p *Player) broadcastTextMessage(debug func() *zerolog.Event, s string) {
+	var c string
+
+	p.withMemory(func(m *PlayerMemory) {
+		c = m.textChannel
+	})
+
+	if c == "" {
+		return
+	}
+
+	if debug != nil {
+		l := debug()
+		if l != nil {
+			l.
+				Str("notification_message", s).
+				Msg("broadcasting notification")
+		}
+	}
+
+	_, err := p.discordSession.ChannelMessageSend(c, s)
+	if err != nil {
+		log.Err(err).
+			Str("notification_message", s).
+			Msg("failed to send message")
+	}
+}
+
 func (p *Player) sendChannel(debug func() *zerolog.Event) chan<- []byte {
 	var c *discordgo.VoiceConnection
 	var result chan<- []byte
@@ -371,8 +432,7 @@ func (p *Player) sendChannel(debug func() *zerolog.Event) chan<- []byte {
 	})
 
 	if c == nil {
-		// TODO: send message to text channel
-		debug().Msg("no active voice channel")
+		p.broadcastTextMessage(debug, "no active voice channel")
 		return result
 	}
 
@@ -380,16 +440,14 @@ func (p *Player) sendChannel(debug func() *zerolog.Event) chan<- []byte {
 	defer c.Unlock()
 
 	if !c.Ready {
-		// TODO: send message to text channel
-		debug().Msg("voice channel not ready")
+		p.broadcastTextMessage(debug, "voice channel not ready")
 		return result
 	}
 
 	result = c.OpusSend
 
 	if result == nil {
-		// TODO: send message to text channel
-		debug().Msg("voice channel has invalid sending channel")
+		p.broadcastTextMessage(debug, "voice channel has no sender")
 	}
 
 	return result
@@ -460,6 +518,8 @@ func playerMainLoop(p *Player, statePtr *State, debug func() *zerolog.Event, set
 		// type: blocking
 		// signals recognized when in initial state
 		s := <-sigChan
+
+		p.setDefaultTextChannel(s.src)
 
 		debug().Msg("player: got signal before playing track")
 
@@ -535,6 +595,14 @@ func playerMainLoop(p *Player, statePtr *State, debug func() *zerolog.Event, set
 	if track == nil {
 		*statePtr = StateIdle
 		return nil
+	} else {
+
+		msg := "now playing: " + track.url
+		if track.authorMention != "" {
+			msg += " ( added by " + track.authorMention + " )"
+		}
+
+		p.broadcastTextMessage(debug, msg)
 	}
 
 	err = setNiceness(0)

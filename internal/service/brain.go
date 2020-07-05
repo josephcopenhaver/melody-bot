@@ -1,6 +1,10 @@
 package service
 
-import "sync"
+import (
+	"sync"
+
+	"github.com/bwmarrin/discordgo"
+)
 
 type Brain struct {
 	mutex    *sync.Mutex
@@ -14,7 +18,7 @@ func NewBrain() *Brain {
 	}
 }
 
-func (b *Brain) Player(guildId string) *Player {
+func (b *Brain) Player(s *discordgo.Session, guildId string) *Player {
 
 	var result *Player
 
@@ -35,7 +39,7 @@ func (b *Brain) Player(guildId string) *Player {
 		return resp.(*Player)
 	}
 
-	result = NewPlayer(guildId)
+	result = NewPlayer(s, guildId)
 
 	b.guildMap.Store(guildId, result)
 

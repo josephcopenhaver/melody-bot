@@ -6,15 +6,16 @@
 - [x] encode to discord friendly 8bit opus format
 - [ ] be able to log bot messages to a discord channel
 - [ ] add a way to print the current playlist
-- [ ] on track change, broadcast a message to a text channel as to what is playing and what is coming next
-- [ ] when channel is empty, stop playback
+- [x] on track change, broadcast what is now playing
+- [ ] on track change, broadcast what is playing next after this one
+- [ ] when channel is empty except for the bot, stop playback
 - [ ] when servicing more than one guild, keep service process niceness at 0
 - [x] if missing niceness capabilities, never lower service niceness
 - [x] simplify handler registration
-- [ ] when @msg the bot from a specific text channel, support bringing them to the target channel logically
+- [x] when @msg the bot from a specific text channel, support bringing them to the target channel logically
 - [ ] when @msg the bot in a public channel, messages in public channel should indicate who issued the command
 - [ ] when direct message the bot, echo results back to the user, but also log playback activity to the "target logical log channel"
 - [x] handler providers should return a struct rather than a function of components, this way we can use interfaces and simplfy the hander.go code
 - [ ] remove track from playlist
 - [ ] place tracks in playlist while they are transcoding so order can be preserved
-- [ ] place author ID and mention into track record so when the track plays we know who to thank when it plays
+- [x] place author mention into track record so when the track plays we know who to thank when it plays

@@ -7,9 +7,9 @@ import (
 	"github.com/josephcopenhaver/discord-bot/internal/service"
 )
 
-func Help(handlers []HandleMessageCreate) HandleMessageCreate {
+func Help(inputHandlers []HandleMessageCreate) HandleMessageCreate {
 
-	msg := "---"
+	msg := "---\n#\n# help:\n#\n"
 
 	result := newHandleMessageCreate(
 		"help",
@@ -35,6 +35,8 @@ func Help(handlers []HandleMessageCreate) HandleMessageCreate {
 		),
 	)
 
+	handlers := make([]HandleMessageCreate, len(inputHandlers), len(inputHandlers)+1)
+	copy(handlers, inputHandlers)
 	handlers = append(handlers, result)
 
 	sort.Slice(handlers, func(i, j int) bool {
