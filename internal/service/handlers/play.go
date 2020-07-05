@@ -167,6 +167,7 @@ func Play() HandleMessageCreate {
 		"play <url>",
 		"append track from youtube url to the playlist",
 		newRegexMatcher(
+			true,
 			regexp.MustCompile(`^\s*play\s+(?P<url>[^\s]+.*?)\s*$`),
 			playAfterTranscode,
 		),
@@ -181,14 +182,15 @@ func playAfterTranscode(s *discordgo.Session, m *discordgo.MessageCreate, p *ser
 	}
 
 	// ensure that the bot is first in a voice channel
-	c := func() *discordgo.VoiceConnection {
-		s.RLock()
-		defer s.RUnlock()
+	{
+		c, err := findVoiceChannel(s, m, p)
+		if err != nil {
+			return fmt.Errorf("failed to auto-join a voice channel: %v", err)
+		}
 
-		return s.VoiceConnections[m.GuildID]
-	}()
-	if c == nil {
-		return errors.New("not in a voice channel")
+		if c == nil {
+			return errors.New("not in a voice channel")
+		}
 	}
 
 	dlc := ytdl.Client{
@@ -352,6 +354,46 @@ func playAfterTranscode(s *discordgo.Session, m *discordgo.MessageCreate, p *ser
 	play(p, m, urlStr, cacheDir)
 
 	return permit.Done()
+}
+
+func findVoiceChannel(s *discordgo.Session, m *discordgo.MessageCreate, p *service.Player) (*discordgo.VoiceConnection, error) {
+
+	result := func() *discordgo.VoiceConnection {
+		s.RLock()
+		defer s.RUnlock()
+
+		return s.VoiceConnections[m.GuildID]
+	}()
+	if result != nil {
+		return result, nil
+	}
+
+	// find current voice channel of message sender and join it
+
+	g, err := s.Guild(m.GuildID)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, v := range g.VoiceStates {
+		if v.UserID != m.Author.ID {
+			continue
+		}
+
+		mute := false
+		deaf := false
+
+		result, err = s.ChannelVoiceJoin(m.GuildID, v.ChannelID, mute, deaf)
+		if err != nil {
+			return nil, err
+		}
+
+		p.SetVoiceConnection(m, result)
+
+		return result, nil
+	}
+
+	return nil, nil
 }
 
 func extractAudio(vidPath string) error {

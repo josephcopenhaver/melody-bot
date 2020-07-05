@@ -12,6 +12,7 @@ func Repeat() HandleMessageCreate {
 		"repeat",
 		"cycles playlist repeat mode between: [\"repeating\", \"not repeating\"]",
 		newWordMatcher(
+			true,
 			[]string{"repeat"},
 			func(s *discordgo.Session, m *discordgo.MessageCreate, p *service.Player, _ map[string]string) error {
 

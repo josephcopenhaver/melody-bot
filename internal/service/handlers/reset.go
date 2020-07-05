@@ -12,6 +12,7 @@ func Reset() HandleMessageCreate {
 		"reset",
 		"resets player state back to defaults",
 		newWordMatcher(
+			true,
 			[]string{"reset"},
 			func(s *discordgo.Session, m *discordgo.MessageCreate, p *service.Player, _ map[string]string) error {
 

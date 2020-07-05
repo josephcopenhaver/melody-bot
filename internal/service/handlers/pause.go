@@ -12,6 +12,7 @@ func Pause() HandleMessageCreate {
 		"pause",
 		"pauses playback and remember position in the current track; can be resumed",
 		newWordMatcher(
+			true,
 			[]string{"pause"},
 			func(s *discordgo.Session, m *discordgo.MessageCreate, p *service.Player, _ map[string]string) error {
 

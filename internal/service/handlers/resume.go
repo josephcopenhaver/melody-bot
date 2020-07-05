@@ -12,6 +12,7 @@ func Resume() HandleMessageCreate {
 		"<resume|play>",
 		"if stopped or paused, resumes playback",
 		newWordMatcher(
+			true,
 			[]string{"resume", "play"},
 			func(s *discordgo.Session, m *discordgo.MessageCreate, p *service.Player, _ map[string]string) error {
 

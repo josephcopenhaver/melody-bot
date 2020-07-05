@@ -14,6 +14,7 @@ func RestartTrack() HandleMessageCreate {
 		"restart track",
 		"if playback is in the middle of a track, rewind to the start of the track",
 		newRegexMatcher(
+			true,
 			regexp.MustCompile(`^\s*restart\s+track\s*$`),
 			func(s *discordgo.Session, m *discordgo.MessageCreate, p *service.Player, _ map[string]string) error {
 

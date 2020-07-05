@@ -18,6 +18,7 @@ func JoinChannel() HandleMessageCreate {
 		"join <channel_name>",
 		"makes the bot join a specific voice channel",
 		newRegexMatcher(
+			true,
 			regexp.MustCompile(`^\s*join\s+(?P<channel_name>[^\s]+.*?)\s*$`),
 			func(s *discordgo.Session, m *discordgo.MessageCreate, p *service.Player, args map[string]string) error {
 

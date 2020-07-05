@@ -14,6 +14,7 @@ func ClearPlaylist() HandleMessageCreate {
 		"clear playlist",
 		"removes all tracks in the playlist",
 		newRegexMatcher(
+			true,
 			regexp.MustCompile(`^\s*clear\s+playlist\s*$`),
 			func(s *discordgo.Session, m *discordgo.MessageCreate, p *service.Player, _ map[string]string) error {
 

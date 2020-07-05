@@ -12,6 +12,7 @@ func Stop() HandleMessageCreate {
 		"stop",
 		"stops playback of current track and rewinds to the beginning of the current track",
 		newWordMatcher(
+			true,
 			[]string{"stop"},
 			func(s *discordgo.Session, m *discordgo.MessageCreate, p *service.Player, _ map[string]string) error {
 

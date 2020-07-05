@@ -14,6 +14,7 @@ func Echo() HandleMessageCreate {
 		"echo <message>",
 		"responds with the same message provided",
 		newRegexMatcher(
+			false,
 			regexp.MustCompile(`^\s*echo\s+(?P<msg>[^\s]*.*?)\s*$`),
 			func(s *discordgo.Session, m *discordgo.MessageCreate, _ *service.Player, args map[string]string) error {
 

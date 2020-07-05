@@ -16,6 +16,7 @@ func Help(handlers []HandleMessageCreate) HandleMessageCreate {
 		"help",
 		"enumerates each bot command, it's syntax, and what the command does",
 		newWordMatcher(
+			false,
 			[]string{"help"},
 			func(s *discordgo.Session, m *discordgo.MessageCreate, _ *service.Player, _ map[string]string) error {
 

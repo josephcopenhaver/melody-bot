@@ -12,10 +12,11 @@ func Ping() HandleMessageCreate {
 		"ping",
 		"responds with pong message",
 		newWordMatcher(
+			false,
 			[]string{"ping"},
 			func(s *discordgo.Session, m *discordgo.MessageCreate, _ *service.Player, _ map[string]string) error {
 
-				_, err := s.ChannelMessageSend(m.ChannelID, "pong, in reply to "+m.Message.Author.Mention())
+				_, err := s.ChannelMessageSend(m.ChannelID, "pong")
 				return err
 			},
 		),

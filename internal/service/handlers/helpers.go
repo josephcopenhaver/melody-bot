@@ -12,10 +12,10 @@ type HandleMessageCreate struct {
 	Name        string
 	Usage       string
 	Description string
-	Matcher     func(string) func(*discordgo.Session, *discordgo.MessageCreate, *service.Player) error
+	Matcher     func(*service.Player, string) func(*discordgo.Session, *discordgo.MessageCreate, *service.Player) error
 }
 
-func newHandleMessageCreate(name, usage, description string, matcher func(string) func(*discordgo.Session, *discordgo.MessageCreate, *service.Player) error) HandleMessageCreate {
+func newHandleMessageCreate(name, usage, description string, matcher func(*service.Player, string) func(*discordgo.Session, *discordgo.MessageCreate, *service.Player) error) HandleMessageCreate {
 	return HandleMessageCreate{
 		Name:        name,
 		Usage:       usage,
@@ -24,8 +24,12 @@ func newHandleMessageCreate(name, usage, description string, matcher func(string
 	}
 }
 
-func newWordMatcher(words []string, handler func(*discordgo.Session, *discordgo.MessageCreate, *service.Player, map[string]string) error) func(string) func(*discordgo.Session, *discordgo.MessageCreate, *service.Player) error {
-	return func(s string) func(*discordgo.Session, *discordgo.MessageCreate, *service.Player) error {
+func newWordMatcher(requirePlayer bool, words []string, handler func(*discordgo.Session, *discordgo.MessageCreate, *service.Player, map[string]string) error) func(*service.Player, string) func(*discordgo.Session, *discordgo.MessageCreate, *service.Player) error {
+	return func(p *service.Player, s string) func(*discordgo.Session, *discordgo.MessageCreate, *service.Player) error {
+
+		if p == nil && requirePlayer {
+			return nil
+		}
 
 		s = strings.TrimSpace(s)
 		for _, w := range words {
@@ -40,8 +44,12 @@ func newWordMatcher(words []string, handler func(*discordgo.Session, *discordgo.
 	}
 }
 
-func newRegexMatcher(re *regexp.Regexp, handler func(*discordgo.Session, *discordgo.MessageCreate, *service.Player, map[string]string) error) func(string) func(*discordgo.Session, *discordgo.MessageCreate, *service.Player) error {
-	return func(s string) func(*discordgo.Session, *discordgo.MessageCreate, *service.Player) error {
+func newRegexMatcher(requirePlayer bool, re *regexp.Regexp, handler func(*discordgo.Session, *discordgo.MessageCreate, *service.Player, map[string]string) error) func(*service.Player, string) func(*discordgo.Session, *discordgo.MessageCreate, *service.Player) error {
+	return func(p *service.Player, s string) func(*discordgo.Session, *discordgo.MessageCreate, *service.Player) error {
+
+		if p == nil && requirePlayer {
+			return nil
+		}
 
 		args := regexMap(re, s)
 		if args == nil {

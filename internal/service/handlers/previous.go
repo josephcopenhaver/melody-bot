@@ -12,6 +12,7 @@ func Previous() HandleMessageCreate {
 		"<previous|prev>",
 		"move playback to the previous track in the playlist",
 		newWordMatcher(
+			true,
 			[]string{"previous", "prev"},
 			func(s *discordgo.Session, m *discordgo.MessageCreate, p *service.Player, _ map[string]string) error {
 

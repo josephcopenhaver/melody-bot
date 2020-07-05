@@ -12,6 +12,7 @@ func Next() HandleMessageCreate {
 		"<next|skip>",
 		"move playback to the next track in the playlist",
 		newWordMatcher(
+			true,
 			[]string{"next", "skip"},
 			func(s *discordgo.Session, m *discordgo.MessageCreate, p *service.Player, _ map[string]string) error {
 

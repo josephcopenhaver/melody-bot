@@ -88,68 +88,22 @@ func (srv *Server) addMuxHandlers() {
 			return
 		}
 
-		if m.GuildID == "" {
-			// TODO: handle bot-direct messages
-			return
-		}
-
-		p = srv.Brain.Player(m.GuildID)
-
 		trimMsg := strings.TrimSpace(m.Message.Content)
-		if !strings.HasPrefix(trimMsg, "<@") {
-			return
-		}
 
-		prefix := func() string {
+		if m.GuildID != "" {
 
-			prefix := s.State.User.Mention()
-			if strings.HasPrefix(trimMsg, prefix) {
-				return prefix
+			p = srv.Brain.Player(m.GuildID)
+
+			// verify the user is giving me a direct command in a guild channel
+			// if so then run handlers
+
+			if !strings.HasPrefix(trimMsg, "<@") {
+				return
 			}
 
-			// log.Debug().
-			// 	Str("channel_message", trimMsg).
-			// 	Str("prefix", prefix).
-			// 	Str("mention", "user").
-			// 	Msg("no match")
+			prefix := func() string {
 
-			member, err := s.State.Member(m.GuildID, s.State.User.ID)
-			if err != nil {
-				log.Err(err).
-					Msg("failed to get my own member status")
-				return ""
-			}
-
-			prefix = member.Mention()
-			if strings.HasPrefix(trimMsg, prefix) {
-				return prefix
-			}
-
-			// log.Debug().
-			// 	Str("channel_message", trimMsg).
-			// 	Str("prefix", prefix).
-			// 	Str("mention", "member").
-			// 	Msg("no match")
-
-			for _, roleId := range member.Roles {
-
-				r, err := s.State.Role(m.GuildID, roleId)
-				if err != nil {
-					log.Err(err).
-						Str("role_id", roleId).
-						Msg("failed to get role info")
-					continue
-				}
-
-				if r.Name != s.State.User.Username {
-					// log.Debug().
-					// 	Str("role_name", r.Name).
-					// 	Str("user_name", s.State.User.Username).
-					// 	Msg("role name does not match")
-					continue
-				}
-
-				prefix = r.Mention()
+				prefix := s.State.User.Mention()
 				if strings.HasPrefix(trimMsg, prefix) {
 					return prefix
 				}
@@ -157,39 +111,87 @@ func (srv *Server) addMuxHandlers() {
 				// log.Debug().
 				// 	Str("channel_message", trimMsg).
 				// 	Str("prefix", prefix).
-				// 	Str("mention", "role").
+				// 	Str("mention", "user").
 				// 	Msg("no match")
-			}
 
-			return ""
-		}()
+				member, err := s.State.Member(m.GuildID, s.State.User.ID)
+				if err != nil {
+					log.Err(err).
+						Msg("failed to get my own member status")
+					return ""
+				}
 
-		if prefix == "" {
-			// log.Debug().
-			// 	Str("channel_message", trimMsg).
-			// 	Msg("message not for me")
-			return
-		}
+				prefix = member.Mention()
+				if strings.HasPrefix(trimMsg, prefix) {
+					return prefix
+				}
 
-		// get message without @bot directive
-		{
-			withoutMetion := trimMsg[len(prefix):]
-			newTrimMsg := strings.TrimSpace(withoutMetion)
-			if newTrimMsg == withoutMetion {
 				// log.Debug().
 				// 	Str("channel_message", trimMsg).
-				// 	Msg("not well formed for me")
+				// 	Str("prefix", prefix).
+				// 	Str("mention", "member").
+				// 	Msg("no match")
+
+				for _, roleId := range member.Roles {
+
+					r, err := s.State.Role(m.GuildID, roleId)
+					if err != nil {
+						log.Err(err).
+							Str("role_id", roleId).
+							Msg("failed to get role info")
+						continue
+					}
+
+					if r.Name != s.State.User.Username {
+						// log.Debug().
+						// 	Str("role_name", r.Name).
+						// 	Str("user_name", s.State.User.Username).
+						// 	Msg("role name does not match")
+						continue
+					}
+
+					prefix = r.Mention()
+					if strings.HasPrefix(trimMsg, prefix) {
+						return prefix
+					}
+
+					// log.Debug().
+					// 	Str("channel_message", trimMsg).
+					// 	Str("prefix", prefix).
+					// 	Str("mention", "role").
+					// 	Msg("no match")
+				}
+
+				return ""
+			}()
+
+			if prefix == "" {
+				// log.Debug().
+				// 	Str("channel_message", trimMsg).
+				// 	Msg("message not for me")
 				return
 			}
 
-			trimMsg = newTrimMsg
+			// get message without @bot directive
+			{
+				withoutMetion := trimMsg[len(prefix):]
+				newTrimMsg := strings.TrimSpace(withoutMetion)
+				if newTrimMsg == withoutMetion {
+					// log.Debug().
+					// 	Str("channel_message", trimMsg).
+					// 	Msg("not well formed for me")
+					return
+				}
+
+				trimMsg = newTrimMsg
+			}
 		}
 
 		for i := range srv.EventHandlers.MessageCreate {
 
 			h := &srv.EventHandlers.MessageCreate[i]
 
-			handler := h.Matcher(trimMsg)
+			handler := h.Matcher(p, trimMsg)
 			if handler == nil {
 				continue
 			}
