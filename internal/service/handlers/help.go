@@ -1,24 +1,59 @@
 package handlers
 
 import (
+	"sort"
+
 	"github.com/bwmarrin/discordgo"
 	"github.com/josephcopenhaver/discord-bot/internal/service"
 )
 
-func Help() HandleMessageCreate {
+func Help(handlers []HandleMessageCreate) HandleMessageCreate {
 
-	return newHandleMessageCreate("help", newWordMatcher(
-		[]string{"help"},
-		func(s *discordgo.Session, m *discordgo.MessageCreate, _ *service.Player, _ map[string]string) error {
+	msg := "---"
 
-			// _, err := s.ChannelMessageSend(m.ChannelID, "pong, in reply to "+m.Message.Author.Mention())
+	result := newHandleMessageCreate(
+		"help",
+		"help",
+		"enumerates each bot command, it's syntax, and what the command does",
+		newWordMatcher(
+			[]string{"help"},
+			func(s *discordgo.Session, m *discordgo.MessageCreate, _ *service.Player, _ map[string]string) error {
 
-			// TODO: for each registered handler, enumerate how to invoke and what the invocation does
-			// s := "Cmd: "s.State.User.Mention() + " cmd|alias args..."
-			// s += "\n does X, Y, and Z"
-			// s += "\n"
+				userTxtChan, err := s.UserChannelCreate(m.Author.ID)
+				if err != nil {
+					return err
+				}
 
-			return nil
-		},
-	))
+				_, err = s.ChannelMessageSend(userTxtChan.ID, msg)
+				if err != nil {
+					return err
+				}
+
+				return nil
+			},
+		),
+	)
+
+	handlers = append(handlers, result)
+
+	sort.Slice(handlers, func(i, j int) bool {
+
+		return handlers[i].Name < handlers[j].Name
+	})
+
+	for _, h := range handlers {
+
+		msg += "\n" + h.Name + ":\n"
+
+		if h.Usage != "" {
+			msg += "  usage: " + h.Usage + "\n"
+		}
+
+		if h.Description != "" {
+			msg += "  description: " + h.Description + "\n"
+		}
+
+	}
+
+	return result
 }

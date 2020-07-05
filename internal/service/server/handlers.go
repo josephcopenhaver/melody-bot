@@ -41,8 +41,6 @@ func (s *Server) Handlers() error {
 
 	s.AddHandler(handlers.Echo())
 
-	s.AddHandler(handlers.Help())
-
 	s.DiscordSession.AddHandler(func(s *discordgo.Session, v *discordgo.VoiceStateUpdate) {
 		// https://discord.com/developers/docs/topics/gateway#voice-state-update
 		// Sent when someone joins/leaves/moves voice channels. Inner payload is a voice state object.
@@ -73,6 +71,9 @@ func (s *Server) Handlers() error {
 
 		// intent: pause any active broadcast when bot is kicked from a channel
 	})
+
+	// always keep last, it analyzes registered handlers
+	s.AddHandler(handlers.Help(s.EventHandlers.MessageCreate))
 
 	return nil
 }

@@ -9,14 +9,18 @@ import (
 )
 
 type HandleMessageCreate struct {
-	Name    string
-	Matcher func(string) func(*discordgo.Session, *discordgo.MessageCreate, *service.Player) error
+	Name        string
+	Usage       string
+	Description string
+	Matcher     func(string) func(*discordgo.Session, *discordgo.MessageCreate, *service.Player) error
 }
 
-func newHandleMessageCreate(name string, matcher func(string) func(*discordgo.Session, *discordgo.MessageCreate, *service.Player) error) HandleMessageCreate {
+func newHandleMessageCreate(name, usage, description string, matcher func(string) func(*discordgo.Session, *discordgo.MessageCreate, *service.Player) error) HandleMessageCreate {
 	return HandleMessageCreate{
-		Name:    name,
-		Matcher: matcher,
+		Name:        name,
+		Usage:       usage,
+		Description: description,
+		Matcher:     matcher,
 	}
 }
 

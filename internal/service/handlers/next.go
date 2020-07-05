@@ -7,13 +7,18 @@ import (
 
 func Next() HandleMessageCreate {
 
-	return newHandleMessageCreate("next", newWordMatcher(
-		[]string{"next", "skip"},
-		func(s *discordgo.Session, m *discordgo.MessageCreate, p *service.Player, _ map[string]string) error {
+	return newHandleMessageCreate(
+		"next",
+		"<next|skip>",
+		"move playback to the next track in the playlist",
+		newWordMatcher(
+			[]string{"next", "skip"},
+			func(s *discordgo.Session, m *discordgo.MessageCreate, p *service.Player, _ map[string]string) error {
 
-			p.Next(m)
+				p.Next(m)
 
-			return nil
-		},
-	))
+				return nil
+			},
+		),
+	)
 }

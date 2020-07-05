@@ -7,14 +7,19 @@ import (
 
 func Repeat() HandleMessageCreate {
 
-	return newHandleMessageCreate("repeat", newWordMatcher(
-		[]string{"repeat"},
-		func(s *discordgo.Session, m *discordgo.MessageCreate, p *service.Player, _ map[string]string) error {
+	return newHandleMessageCreate(
+		"repeat",
+		"repeat",
+		"cycles playlist repeat mode between: [\"repeating\", \"not repeating\"]",
+		newWordMatcher(
+			[]string{"repeat"},
+			func(s *discordgo.Session, m *discordgo.MessageCreate, p *service.Player, _ map[string]string) error {
 
-			repeatMode := p.CycleRepeatMode(m)
+				repeatMode := p.CycleRepeatMode(m)
 
-			_, err := s.ChannelMessageSend(m.ChannelID, "repeat mode is now: "+repeatMode)
-			return err
-		},
-	))
+				_, err := s.ChannelMessageSend(m.ChannelID, "repeat mode is now: "+repeatMode)
+				return err
+			},
+		),
+	)
 }

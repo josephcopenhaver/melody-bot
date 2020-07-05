@@ -15,3 +15,6 @@
 - [ ] when @msg the bot in a public channel, messages in public channel should indicate who issued the command
 - [ ] when direct message the bot, echo results back to the user, but also log playback activity to the "target logical log channel"
 - [x] handler providers should return a struct rather than a function of components, this way we can use interfaces and simplfy the hander.go code
+- [ ] remove track from playlist
+- [ ] place tracks in playlist while they are transcoding so order can be preserved
+- [ ] place author ID and mention into track record so when the track plays we know who to thank when it plays

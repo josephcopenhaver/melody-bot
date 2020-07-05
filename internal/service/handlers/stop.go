@@ -7,13 +7,18 @@ import (
 
 func Stop() HandleMessageCreate {
 
-	return newHandleMessageCreate("stop", newWordMatcher(
-		[]string{"stop"},
-		func(s *discordgo.Session, m *discordgo.MessageCreate, p *service.Player, _ map[string]string) error {
+	return newHandleMessageCreate(
+		"stop",
+		"stop",
+		"stops playback of current track and rewinds to the beginning of the current track",
+		newWordMatcher(
+			[]string{"stop"},
+			func(s *discordgo.Session, m *discordgo.MessageCreate, p *service.Player, _ map[string]string) error {
 
-			p.Stop(m)
+				p.Stop(m)
 
-			return nil
-		},
-	))
+				return nil
+			},
+		),
+	)
 }

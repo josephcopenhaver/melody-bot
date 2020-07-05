@@ -7,13 +7,18 @@ import (
 
 func Resume() HandleMessageCreate {
 
-	return newHandleMessageCreate("resume", newWordMatcher(
-		[]string{"resume"},
-		func(s *discordgo.Session, m *discordgo.MessageCreate, p *service.Player, _ map[string]string) error {
+	return newHandleMessageCreate(
+		"resume",
+		"<resume|play>",
+		"if stopped or paused, resumes playback",
+		newWordMatcher(
+			[]string{"resume", "play"},
+			func(s *discordgo.Session, m *discordgo.MessageCreate, p *service.Player, _ map[string]string) error {
 
-			p.Resume(m)
+				p.Resume(m)
 
-			return nil
-		},
-	))
+				return nil
+			},
+		),
+	)
 }

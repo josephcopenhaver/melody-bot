@@ -79,7 +79,7 @@ type playRequest struct {
 
 type PlayerMemory struct {
 	voiceConnection *discordgo.VoiceConnection
-	looping         bool
+	notLooping      bool
 	currentTrackIdx int
 	// logChannelId *string // TODO: make this a thing
 	tracks       []track
@@ -193,7 +193,7 @@ func (p *Player) nextTrack() *track {
 
 		m.currentTrackIdx++
 		if m.currentTrackIdx >= len(m.tracks) {
-			if !m.looping {
+			if m.notLooping {
 				m.currentTrackIdx = -1
 				return
 			}
@@ -308,12 +308,12 @@ func (p *Player) CycleRepeatMode(srcEvt interface{}) string {
 	var result string
 
 	p.withMemory(func(m *PlayerMemory) {
-		m.looping = !m.looping
+		m.notLooping = !m.notLooping
 
-		if m.looping {
-			result = "repeating playlist"
-		} else {
+		if m.notLooping {
 			result = "not repeating playlist"
+		} else {
+			result = "repeating playlist"
 		}
 	})
 
