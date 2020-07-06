@@ -46,6 +46,11 @@ func (s Signal) String() string {
 	}[int(s)]
 }
 
+type TracedSignal struct {
+	src interface{}
+	sig Signal
+}
+
 type State int8
 
 const (
@@ -68,15 +73,18 @@ func (s State) String() string {
 	}[int(s)]
 }
 
-type track struct {
-	url           string
-	audioFile     string
-	authorId      string
-	authorMention string
+type Track struct {
+	// private
+	audioFile string
+
+	// public
+	Url           string
+	AuthorId      string
+	AuthorMention string
 }
 
 type playRequest struct {
-	*track
+	track *Track
 }
 
 type PlayerMemory struct {
@@ -85,7 +93,7 @@ type PlayerMemory struct {
 	notLooping      bool
 	currentTrackIdx int
 	textChannel     string
-	tracks          []track
+	tracks          []Track
 	playRequests    chan *playRequest
 }
 
@@ -124,7 +132,7 @@ func (m *PlayerMemory) play(s State) {
 
 		switch s {
 		case StateDefault:
-			m.tracks = []track{t}
+			m.tracks = []Track{t}
 			m.currentTrackIdx = -1
 		case StateIdle:
 			i := m.indexOfTrack(t.audioFile)
@@ -189,11 +197,6 @@ func (m *PlayerMemory) hasAudience(s *discordgo.Session, guildId string) bool {
 	return false
 }
 
-type TracedSignal struct {
-	src interface{}
-	sig Signal
-}
-
 type Player struct {
 	mutex          sync.RWMutex
 	memory         atomic.Value
@@ -240,8 +243,8 @@ func (p *Player) notifyNoAudience(debug func() *zerolog.Event, s Signal) {
 // 	return result
 // }
 
-func (p *Player) nextTrack() *track {
-	var result *track
+func (p *Player) nextTrack() *Track {
+	var result *Track
 
 	p.withMemory(func(m *PlayerMemory) {
 
@@ -380,11 +383,11 @@ func (p *Player) Play(srcEvt interface{}, url string, authorId, authorMention st
 	p.withMemory(func(m *PlayerMemory) {
 
 		m.playRequests <- &playRequest{
-			track: &track{
-				url:           url,
+			track: &Track{
 				audioFile:     file,
-				authorId:      authorId,
-				authorMention: authorMention,
+				Url:           url,
+				AuthorId:      authorId,
+				AuthorMention: authorMention,
 			},
 		}
 
@@ -450,6 +453,35 @@ func (p *Player) HasAudience() bool {
 	p.withMemory(func(m *PlayerMemory) {
 		result = m.hasAudience(p.discordSession, p.discordGuildId)
 	})
+
+	return result
+}
+
+type Playlist struct {
+	Tracks          []Track
+	CurrentTrackIdx int
+}
+
+func (p *Player) GetPlaylist() Playlist {
+	var result Playlist
+
+	p.withMemory(func(m *PlayerMemory) {
+
+		if len(m.tracks) == 0 {
+			return
+		}
+
+		result.Tracks = make([]Track, len(m.tracks))
+		copy(result.Tracks, m.tracks)
+
+		result.CurrentTrackIdx = m.currentTrackIdx
+	})
+
+	if len(result.Tracks) == 0 {
+		result.CurrentTrackIdx = -1
+	} else if result.CurrentTrackIdx >= len(result.Tracks) {
+		result.CurrentTrackIdx = 0
+	}
 
 	return result
 }
@@ -698,9 +730,9 @@ func playerMainLoop(p *Player, statePtr *State, debug func() *zerolog.Event, set
 		return nil
 	} else {
 
-		msg := "now playing: " + track.url
-		if track.authorMention != "" {
-			msg += " ( added by " + track.authorMention + " )"
+		msg := "now playing: " + track.Url
+		if track.AuthorMention != "" {
+			msg += " ( added by " + track.AuthorMention + " )"
 		}
 
 		p.broadcastTextMessage(debug, msg)

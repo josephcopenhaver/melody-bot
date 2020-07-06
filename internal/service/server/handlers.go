@@ -43,6 +43,8 @@ func (s *Server) Handlers() error {
 
 	s.AddHandler(handlers.SetTextChannel())
 
+	s.AddHandler(handlers.ShowPlaylist())
+
 	s.DiscordSession.AddHandler(func(session *discordgo.Session, evt *discordgo.VoiceStateUpdate) {
 		// https://discord.com/developers/docs/topics/gateway#voice-state-update
 		// Sent when someone joins/leaves/moves voice channels. Inner payload is a voice state object.

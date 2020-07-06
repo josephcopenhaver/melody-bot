@@ -248,7 +248,7 @@ func playAfterTranscode(s *discordgo.Session, m *discordgo.MessageCreate, p *ser
 		}
 
 		if ok {
-			_, err = s.ChannelMessageSend(m.ChannelID, "download skipped, cached: "+urlStr)
+			_, err = s.ChannelMessageSend(m.ChannelID, "```\ndownload skipped, cached: "+urlStr+"\n```")
 			if err != nil {
 				log.Err(err).
 					Msg("failed to send play from cache confirmation")
@@ -260,7 +260,7 @@ func playAfterTranscode(s *discordgo.Session, m *discordgo.MessageCreate, p *ser
 		}
 	}
 
-	_, err = s.ChannelMessageSend(m.ChannelID, "downloading audio file: "+urlStr)
+	_, err = s.ChannelMessageSend(m.ChannelID, "```\ndownloading audio file: "+urlStr+"\n```")
 	if err != nil {
 		log.Err(err).
 			Msg("failed to send download start msg")
@@ -322,7 +322,7 @@ func playAfterTranscode(s *discordgo.Session, m *discordgo.MessageCreate, p *ser
 		return fmt.Errorf("download interrupted: %v", err)
 	}
 
-	_, err = s.ChannelMessageSend(m.ChannelID, "download complete, transcode starting: "+urlStr)
+	_, err = s.ChannelMessageSend(m.ChannelID, "```\ndownload complete, transcode starting: "+urlStr+"\n```")
 	if err != nil {
 		log.Err(err).
 			Msg("failed to send download done msg")
@@ -345,7 +345,7 @@ func playAfterTranscode(s *discordgo.Session, m *discordgo.MessageCreate, p *ser
 	}
 	_ = fi.Close() // don't care about error here, just wanted to create the file and we did
 
-	_, err = s.ChannelMessageSend(m.ChannelID, "transcode complete, queuing: "+urlStr)
+	_, err = s.ChannelMessageSend(m.ChannelID, "```\ntranscode complete, queuing: "+urlStr+"\n```")
 	if err != nil {
 		log.Err(err).
 			Msg("failed to send download done msg")

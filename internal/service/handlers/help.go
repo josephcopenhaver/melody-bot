@@ -9,7 +9,7 @@ import (
 
 func Help(inputHandlers []HandleMessageCreate) HandleMessageCreate {
 
-	msg := "---\n#\n# help:\n#\n"
+	msg := "```\n---\n#\n# help:\n#\n"
 
 	result := newHandleMessageCreate(
 		"help",
@@ -57,6 +57,8 @@ func Help(inputHandlers []HandleMessageCreate) HandleMessageCreate {
 		}
 
 	}
+
+	msg += "```"
 
 	return result
 }

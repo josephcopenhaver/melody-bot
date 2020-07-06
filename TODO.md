@@ -5,7 +5,7 @@
 - [x] auto join the voice channel a guild member is in when they ask you to play a file ( if not already in a voice channel )
 - [x] encode to discord friendly 8bit opus format
 - [x] be able to log bot messages to a discord channel
-- [ ] add a way to print the current playlist
+- [x] add a way to print the current playlist
 - [x] on track change, broadcast what is now playing
 - [ ] on track change, broadcast what is playing next after this one
 - [x] when channel is empty except for the bot, stop playback
