@@ -6,23 +6,13 @@ rm -rf build
 
 # if in a container, short circuit
 
-if [ -n "${IN_DOCKER_CONTAINER}" ]; then
+if [ "$IN_DOCKER_CONTAINER" == "y" ]; then
     exit 0
 fi
 
-# handle cleaning up docker-compose env
+REMOVE_VOLUMES=y ./scripts/down.sh
 
-function join_by { local IFS="$1"; shift; echo "$*"; }
-
-COMPOSE_PROJECT_NAME="josephcopenhaver-discord-bot"
-COMPOSE_IGNORE_ORPHANS="false"
-
-export COMPOSE_FILE="$(find "$PWD/docker" -maxdepth 2 -name docker-compose.yml | tr '\n' ':' | sed -E 's/:+$//')"
-
-# remove any attached vscode dev-container
-docker rm -f josephcopenhaver--discord-bot--shell || true
-
-docker-compose down
+set -x
 
 rm -rf .docker-volumes
 mkdir -p .docker-volumes

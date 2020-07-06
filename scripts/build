@@ -7,8 +7,25 @@ GIT_SHA="$(git log --pretty=format:'%H' -n 1)"
 
 mkdir -p build/bin
 
+go mod vendor
+
+# TODO: wow, does not appear to be a better way atm
+# just conna hack it
+# ref: https://github.com/golang/go/issues/26366
+#
+# install specific verion of josephcopenhaver/gopus with cgo files
+(
+    pushd vendor/github.com/josephcopenhaver
+    rm -rf gopus
+    git clone https://github.com/josephcopenhaver/gopus.git
+    cd gopus
+    git reset --hard 17c317f9c9e9545df42c4ffc0bb9252ee6261868
+)
+
+# TODO: statically compile or have release image use the shell as a base image
+
 set -x
-go build \
+CGO_ENABLED=1 go build \
     -o build/bin/ \
     -ldflags "-X main.GitSHA=${GIT_SHA} -X main.Version=${VERSION}" \
     ./cmd/...

@@ -1,0 +1,3 @@
+#!/bin/bash
+
+function join_by { local IFS="$1"; shift; echo "$*"; }

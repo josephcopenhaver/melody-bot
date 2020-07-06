@@ -6,7 +6,9 @@ services:
     stdin_open: true
     build:
       context: $PWD/docker/shell
-    image: josephcopenhaver/discord-bot-shell:${GIT_SHA:-latest}
+    image: josephcopenhaver/discord-bot--shell:${GIT_SHA:-latest}
+    cap_add:
+      - SYS_NICE
     entrypoint: bash
     networks:
       - infrastructure

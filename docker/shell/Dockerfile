@@ -65,5 +65,17 @@ RUN test -f /usr/share/bash-completion/bash_completion \
     && echo 'test -f $HOME/.bashrc.local && source $HOME/.bashrc.local' >> /root/.bashrc \
     && true
 
-# specify a working default working directory
+# install runtime required packages
+RUN export DEBIAN_FRONTEND=noninteractive \
+    && apt-get update \
+    && apt-get install -y \
+    pkg-config \
+    libopus-dev \
+    libopusfile-dev \
+    python3-pip \
+    opus-tools \
+    ffmpeg \
+    && pip3 install ffmpeg-normalize==1.19.1
+
+# specify a default working directory
 WORKDIR /workspace
