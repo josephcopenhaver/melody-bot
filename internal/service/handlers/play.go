@@ -388,7 +388,7 @@ func findVoiceChannel(s *discordgo.Session, m *discordgo.MessageCreate, p *servi
 			return nil, err
 		}
 
-		p.SetVoiceConnection(m, result)
+		p.SetVoiceConnection(m, v.ChannelID, result)
 
 		return result, nil
 	}

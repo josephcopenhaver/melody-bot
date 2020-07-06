@@ -45,3 +45,9 @@ func (b *Brain) Player(s *discordgo.Session, guildId string) *Player {
 
 	return result
 }
+
+func (b *Brain) PlayerExists(s *discordgo.Session, guildId string) bool {
+
+	_, ok := b.guildMap.Load(guildId)
+	return ok
+}

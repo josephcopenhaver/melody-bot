@@ -47,7 +47,7 @@ func JoinChannel() HandleMessageCreate {
 						return err
 					}
 
-					p.SetVoiceConnection(m, vc)
+					p.SetVoiceConnection(m, c.ID, vc)
 					return nil
 				}
 

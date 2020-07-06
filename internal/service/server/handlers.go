@@ -43,35 +43,127 @@ func (s *Server) Handlers() error {
 
 	s.AddHandler(handlers.SetTextChannel())
 
-	s.DiscordSession.AddHandler(func(s *discordgo.Session, v *discordgo.VoiceStateUpdate) {
+	s.DiscordSession.AddHandler(func(session *discordgo.Session, evt *discordgo.VoiceStateUpdate) {
 		// https://discord.com/developers/docs/topics/gateway#voice-state-update
 		// Sent when someone joins/leaves/moves voice channels. Inner payload is a voice state object.
-		log.Debug().
-			Interface("payload", v).
-			Msg("event: voice state update")
 
-		// intent: when the bot is forced to change channels, may want to renew the brodcast channel
-		// intent: when current channel becomes empty, ensure playback is paused or stopped
+		log.Debug().
+			Msg("evt: join/leave/move voice channel")
+
+		// if not a destructive event then short circuit
+		if evt.VoiceState == nil || evt.VoiceState.GuildID == "" || evt.VoiceState.ChannelID == "" {
+			return
+		}
+
+		// if player does not exist then short circuit
+		if !s.Brain.PlayerExists(session, evt.VoiceState.GuildID) {
+			return
+		}
+
+		p := s.Brain.Player(session, evt.VoiceState.GuildID)
+
+		channelId := p.GetVoiceChannelId()
+		if channelId == "" {
+			return
+		}
+
+		g, err := session.Guild(evt.VoiceState.GuildID)
+		if err != nil {
+			log.Err(err).Msg("failed to get guild voice states")
+			return
+		}
+
+		// short circuit if there is an audience
+		for _, v := range g.VoiceStates {
+
+			if v.ChannelID != channelId {
+				continue
+			}
+
+			// ignore my own status
+			if v.UserID == session.State.User.ID {
+				continue
+			}
+
+			if v.Deaf || v.SelfDeaf {
+				continue
+			}
+
+			// ignore users that are bots
+			st, err := session.User(v.UserID)
+			if err != nil {
+				log.Err(err).Msg("failed to get user info, assuming it is a bot")
+				continue
+			} else if st.Bot {
+				continue
+			}
+
+			return
+		}
+
+		log.Debug().
+			Msg("no audience, pausing")
+
+		p.Pause(evt)
 	})
 
-	s.DiscordSession.AddHandler(func(s *discordgo.Session, v *discordgo.GuildDelete) {
+	s.DiscordSession.AddHandler(func(session *discordgo.Session, evt *discordgo.GuildDelete) {
 		// https://discord.com/developers/docs/topics/gateway#guild-delete
 		// Sent when a guild becomes unavailable during a guild outage, or when the user leaves or is removed from a guild. The inner payload is an unavailable guild object. If the unavailable field is not set, the user was removed from the guild.
-		log.Debug().
-			Interface("payload", v).
-			Msg("event: guild delete")
 
-		// intent: delete any active player ( stop broadcast goroutine ) when bot is kicked from a server
+		log.Debug().
+			Msg("evt: guild unavailable")
+
+		if evt.ID == "" || evt.Unavailable {
+			return
+		}
+
+		// if player does not exist then short circuit
+		if !s.Brain.PlayerExists(session, evt.ID) {
+			return
+		}
+
+		p := s.Brain.Player(session, evt.ID)
+
+		channelId := p.GetVoiceChannelId()
+		if channelId == "" {
+			return
+		}
+
+		// TODO: delete player instead of stop
+
+		p.Stop(evt)
 	})
 
-	s.DiscordSession.AddHandler(func(s *discordgo.Session, v *discordgo.ChannelDelete) {
+	s.DiscordSession.AddHandler(func(session *discordgo.Session, evt *discordgo.ChannelDelete) {
 		// https://discord.com/developers/docs/topics/gateway#channel-delete
 		// Sent when a channel relevant to the current user is deleted. The inner payload is a channel object.
-		log.Debug().
-			Interface("payload", v).
-			Msg("event: channel delete")
 
-		// intent: pause any active broadcast when bot is kicked from a channel
+		log.Debug().
+			Msg("evt: channel deleted")
+
+		if evt.Channel == nil || evt.Channel.GuildID == "" {
+			return
+		}
+
+		// if player does not exist then short circuit
+		if !s.Brain.PlayerExists(session, evt.Channel.GuildID) {
+			return
+		}
+
+		p := s.Brain.Player(session, evt.Channel.GuildID)
+
+		channelId := p.GetVoiceChannelId()
+		if channelId == "" {
+			return
+		}
+
+		if evt.Channel.ID != channelId {
+			return
+		}
+
+		p.Pause(evt)
+		p.SetVoiceConnection(evt, "", nil)
 	})
 
 	// always keep last, it analyzes registered handlers

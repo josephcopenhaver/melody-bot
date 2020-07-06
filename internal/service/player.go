@@ -80,6 +80,7 @@ type playRequest struct {
 }
 
 type PlayerMemory struct {
+	voiceChannelId  string
 	voiceConnection *discordgo.VoiceConnection
 	notLooping      bool
 	currentTrackIdx int
@@ -154,6 +155,7 @@ type Player struct {
 	mutex          sync.RWMutex
 	memory         atomic.Value
 	discordSession *discordgo.Session
+	discordGuildId string
 	signalChan     chan TracedSignal
 }
 
@@ -161,6 +163,7 @@ func NewPlayer(s *discordgo.Session, guildId string) *Player {
 
 	p := &Player{
 		discordSession: s,
+		discordGuildId: guildId,
 		signalChan:     make(chan TracedSignal, 1),
 	}
 
@@ -170,7 +173,7 @@ func NewPlayer(s *discordgo.Session, guildId string) *Player {
 		playRequests:    playRequests,
 		currentTrackIdx: -1,
 	})
-	go playerWorker(p, guildId, p.signalChan)
+	go playerWorker(p, p.signalChan)
 
 	return p
 }
@@ -345,10 +348,11 @@ func (p *Player) Play(srcEvt interface{}, url string, authorId, authorMention st
 	return result
 }
 
-func (p *Player) SetVoiceConnection(srcEvt interface{}, c *discordgo.VoiceConnection) {
+func (p *Player) SetVoiceConnection(srcEvt interface{}, channelId string, c *discordgo.VoiceConnection) {
 
 	p.withMemory(func(m *PlayerMemory) {
 
+		m.voiceChannelId = channelId
 		m.voiceConnection = c
 	})
 
@@ -374,6 +378,16 @@ func (p *Player) SetTextChannel(s string) {
 	})
 
 	p.broadcastTextMessage(nil, "text channel is now this one")
+}
+
+func (p *Player) GetVoiceChannelId() string {
+	var result string
+
+	p.withMemory(func(m *PlayerMemory) {
+		result = m.voiceChannelId
+	})
+
+	return result
 }
 
 func (p *Player) setDefaultTextChannel(v interface{}) {
@@ -453,7 +467,7 @@ func (p *Player) sendChannel(debug func() *zerolog.Event) chan<- []byte {
 	return result
 }
 
-func playerWorker(p *Player, guildId string, sigChan <-chan TracedSignal) {
+func playerWorker(p *Player, sigChan <-chan TracedSignal) {
 
 	state := StateDefault
 	niceness := 19
@@ -461,7 +475,7 @@ func playerWorker(p *Player, guildId string, sigChan <-chan TracedSignal) {
 	debug := func() *zerolog.Event {
 		return log.Debug().
 			Interface("state", state).
-			Str("guild_id", guildId)
+			Str("guild_id", p.discordGuildId)
 	}
 
 	setNiceness := func(n int) error {
@@ -494,7 +508,7 @@ func playerWorker(p *Player, guildId string, sigChan <-chan TracedSignal) {
 					log.Error().
 						Interface("error", r).
 						Interface("state", state).
-						Str("guild_id", guildId).
+						Str("guild_id", p.discordGuildId).
 						Msg("player: recovered from panic")
 				}
 			}()

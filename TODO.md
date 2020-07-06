@@ -19,3 +19,5 @@
 - [ ] remove track from playlist
 - [ ] place tracks in playlist while they are transcoding so order can be preserved
 - [x] place author mention into track record so when the track plays we know who to thank when it plays
+- [ ] only start playing to a channel when there are members listening in that channel
+- [x] on channel change pause playback if no one is in the new channel
