@@ -457,6 +457,39 @@ func (p *Player) HasAudience() bool {
 	return result
 }
 
+func (p *Player) RemoveTrack(url string) bool {
+	result := false
+
+	p.withMemory(func(m *PlayerMemory) {
+
+		for i, t := range m.tracks {
+			if t.Url != url {
+				continue
+			}
+
+			result = true
+
+			if len(m.tracks) == 0 {
+				m.tracks = nil
+				m.currentTrackIdx = -1
+
+				break
+			}
+
+			copy(m.tracks[i:], m.tracks[i+1:])
+			m.tracks = m.tracks[:len(m.tracks)-1]
+
+			if m.currentTrackIdx >= i {
+				m.currentTrackIdx -= 1
+			}
+
+			break
+		}
+	})
+
+	return result
+}
+
 type Playlist struct {
 	Tracks          []Track
 	CurrentTrackIdx int
