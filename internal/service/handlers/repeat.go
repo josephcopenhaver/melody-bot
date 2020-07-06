@@ -10,7 +10,7 @@ func Repeat() HandleMessageCreate {
 	return newHandleMessageCreate(
 		"repeat",
 		"repeat",
-		"cycles playlist repeat mode between: [\"repeating\", \"not repeating\"]",
+		"cycles playlist repeat mode between [\"repeating\", \"not repeating\"]",
 		newWordMatcher(
 			true,
 			[]string{"repeat"},
