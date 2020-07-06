@@ -146,6 +146,49 @@ func (m *PlayerMemory) play(s State) {
 	}
 }
 
+func (m *PlayerMemory) hasAudience(s *discordgo.Session, guildId string) bool {
+
+	if m.voiceChannelId == "" {
+		return false
+	}
+
+	g, err := s.Guild(guildId)
+	if err != nil {
+		log.Err(err).Msg("player: hasAudience: failed to get guild voice states")
+		return false
+	}
+
+	// short circuit if there is an audience
+	for _, v := range g.VoiceStates {
+
+		if v.ChannelID != m.voiceChannelId {
+			continue
+		}
+
+		// ignore my own status
+		if v.UserID == s.State.User.ID {
+			continue
+		}
+
+		if v.Deaf || v.SelfDeaf {
+			continue
+		}
+
+		// ignore users that are bots
+		u, err := s.User(v.UserID)
+		if err != nil {
+			log.Err(err).Msg("failed to get user info, assuming it is a bot")
+			continue
+		} else if u.Bot {
+			continue
+		}
+
+		return true
+	}
+
+	return false
+}
+
 type TracedSignal struct {
 	src interface{}
 	sig Signal
@@ -176,6 +219,10 @@ func NewPlayer(s *discordgo.Session, guildId string) *Player {
 	go playerWorker(p, p.signalChan)
 
 	return p
+}
+
+func (p *Player) notifyNoAudience(debug func() *zerolog.Event, s Signal) {
+	p.broadcastTextMessage(debug, "cannot process \""+s.String()+"\" request at this time: there is no audience")
 }
 
 // // setNextTrackIndex returns true if index is in playlist range
@@ -352,6 +399,13 @@ func (p *Player) SetVoiceConnection(srcEvt interface{}, channelId string, c *dis
 
 	p.withMemory(func(m *PlayerMemory) {
 
+		if c == nil && m.voiceConnection != nil {
+			err := m.voiceConnection.Disconnect()
+			if err != nil {
+				log.Err(err).Msg("SetVoiceConnection: failed to disconnect")
+			}
+		}
+
 		m.voiceChannelId = channelId
 		m.voiceConnection = c
 	})
@@ -385,6 +439,16 @@ func (p *Player) GetVoiceChannelId() string {
 
 	p.withMemory(func(m *PlayerMemory) {
 		result = m.voiceChannelId
+	})
+
+	return result
+}
+
+func (p *Player) HasAudience() bool {
+	result := false
+
+	p.withMemory(func(m *PlayerMemory) {
+		result = m.hasAudience(p.discordSession, p.discordGuildId)
 	})
 
 	return result
@@ -541,9 +605,19 @@ func playerMainLoop(p *Player, statePtr *State, debug func() *zerolog.Event, set
 		case SignalNewVoiceConnection:
 			sendChan = nil
 		case SignalPlay:
+			hasAudience := false
+
 			p.withMemory(func(m *PlayerMemory) {
 				m.play(*statePtr)
+				hasAudience = m.hasAudience(p.discordSession, p.discordGuildId)
 			})
+
+			if !hasAudience {
+				p.notifyNoAudience(debug, s.sig)
+				*statePtr = StateIdle
+				return nil
+			}
+
 			*statePtr = StatePlaying
 		}
 	case StateIdle:
@@ -562,10 +636,23 @@ func playerMainLoop(p *Player, statePtr *State, debug func() *zerolog.Event, set
 		switch s.sig {
 		case SignalNewVoiceConnection:
 			sendChan = nil
+		case SignalReset:
+			p.reset()
+			*statePtr = StateIdle
+			return nil
 		case SignalPlay:
+			hasAudience := false
+
 			p.withMemory(func(m *PlayerMemory) {
 				m.play(*statePtr)
+				hasAudience = m.hasAudience(p.discordSession, p.discordGuildId)
 			})
+
+			if !hasAudience {
+				p.notifyNoAudience(debug, s.sig)
+				return nil
+			}
+
 			*statePtr = StatePlaying
 		case SignalResume:
 			*statePtr = StatePlaying
@@ -694,6 +781,11 @@ func playerMainLoop(p *Player, statePtr *State, debug func() *zerolog.Event, set
 						p.withMemory(func(m *PlayerMemory) {
 							m.play(*statePtr)
 						})
+
+						broadcastMsg := "player is paused; to resume playback send the following message:\n\n" +
+							p.discordSession.State.User.Mention() + " resume"
+
+						p.broadcastTextMessage(debug, broadcastMsg)
 					case SignalPrevious:
 						p.previousTrack()
 						*statePtr = StateIdle

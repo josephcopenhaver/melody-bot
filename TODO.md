@@ -2,22 +2,22 @@
 - [x] be able to play a video from youtube
 - [ ] document required bot permissions: https://discordpy.readthedocs.io/en/latest/discord.html here https://discord.com/developers/applications
 - [ ] document an easy way for users to create their own bot: heroku app?
-- [ ] auto join the voice channel a guild member is in when they ask you to play a file?
+- [x] auto join the voice channel a guild member is in when they ask you to play a file ( if not already in a voice channel )
 - [x] encode to discord friendly 8bit opus format
-- [ ] be able to log bot messages to a discord channel
+- [x] be able to log bot messages to a discord channel
 - [ ] add a way to print the current playlist
 - [x] on track change, broadcast what is now playing
 - [ ] on track change, broadcast what is playing next after this one
-- [ ] when channel is empty except for the bot, stop playback
+- [x] when channel is empty except for the bot, stop playback
 - [ ] when servicing more than one guild, keep service process niceness at 0
 - [x] if missing niceness capabilities, never lower service niceness
 - [x] simplify handler registration
 - [x] when @msg the bot from a specific text channel, support bringing them to the target channel logically
 - [ ] when @msg the bot in a public channel, messages in public channel should indicate who issued the command
-- [ ] when direct message the bot, echo results back to the user, but also log playback activity to the "target logical log channel"
+- [x] when direct message the bot, echo results back to the user, but also log playback activity to the "target logical log channel"
 - [x] handler providers should return a struct rather than a function of components, this way we can use interfaces and simplfy the hander.go code
-- [ ] remove track from playlist
+- [ ] a command to remove a track from the playlist
 - [ ] place tracks in playlist while they are transcoding so order can be preserved
 - [x] place author mention into track record so when the track plays we know who to thank when it plays
-- [ ] only start playing to a channel when there are members listening in that channel
+- [x] only start playing to a channel when there are members listening in that channel
 - [x] on channel change pause playback if no one is in the new channel

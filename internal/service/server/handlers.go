@@ -61,43 +61,7 @@ func (s *Server) Handlers() error {
 		}
 
 		p := s.Brain.Player(session, evt.VoiceState.GuildID)
-
-		channelId := p.GetVoiceChannelId()
-		if channelId == "" {
-			return
-		}
-
-		g, err := session.Guild(evt.VoiceState.GuildID)
-		if err != nil {
-			log.Err(err).Msg("failed to get guild voice states")
-			return
-		}
-
-		// short circuit if there is an audience
-		for _, v := range g.VoiceStates {
-
-			if v.ChannelID != channelId {
-				continue
-			}
-
-			// ignore my own status
-			if v.UserID == session.State.User.ID {
-				continue
-			}
-
-			if v.Deaf || v.SelfDeaf {
-				continue
-			}
-
-			// ignore users that are bots
-			st, err := session.User(v.UserID)
-			if err != nil {
-				log.Err(err).Msg("failed to get user info, assuming it is a bot")
-				continue
-			} else if st.Bot {
-				continue
-			}
-
+		if p.HasAudience() {
 			return
 		}
 
