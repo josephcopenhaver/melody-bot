@@ -22,4 +22,5 @@
 - [x] place author mention into track record so when the track plays we know who to thank when it plays
 - [x] only start playing to a channel when there are members listening in that channel
 - [x] on channel change pause playback if no one is in the new channel
-- [x] only transcode one file at a time
+- [x] only transcode one file at a time to prevent CPU exhaustion
+- [ ] provide a way for a user to configure how many files can be transcoded at once

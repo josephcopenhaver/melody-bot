@@ -338,13 +338,13 @@ func playAfterTranscode(s *discordgo.Session, m *discordgo.MessageCreate, p *ser
 		return fmt.Errorf("download interrupted: %v", err)
 	}
 
-	_, err = s.ChannelMessageSend(m.ChannelID, "```\ndownload complete, transcode starting:\n"+urlStr+"\n```")
+	_, err = s.ChannelMessageSend(m.ChannelID, "```\ndownload complete:\n"+urlStr+"\n```")
 	if err != nil {
 		log.Err(err).
 			Msg("failed to send download done msg")
 	}
 
-	err = extractAudio(dstFilePath)
+	err = extractAudio(s, m, urlStr, dstFilePath)
 	if err != nil {
 		return fmt.Errorf("failed to extract audio: %v", err)
 	}
@@ -423,17 +423,23 @@ func findVoiceChannel(s *discordgo.Session, m *discordgo.MessageCreate, p *servi
 // from occuring at any given point in time
 var extractAudioMutex sync.Mutex
 
-func extractAudio(vidPath string) error {
+func extractAudio(s *discordgo.Session, m *discordgo.MessageCreate, urlStr, vidPath string) error {
 
 	extractAudioMutex.Lock()
 	defer extractAudioMutex.Unlock()
+
+	_, err := s.ChannelMessageSend(m.ChannelID, "```\ntranscode starting:\n"+urlStr+"\n```")
+	if err != nil {
+		log.Err(err).
+			Msg("failed to send download done msg")
+	}
 
 	log.Warn().
 		Str("file", vidPath).
 		Msg("post-processing download")
 
 	tmpDir := path.Join(path.Dir(vidPath), "tmp")
-	err := os.RemoveAll(tmpDir)
+	err = os.RemoveAll(tmpDir)
 	if err != nil {
 		return fmt.Errorf("failed to ensure tmp dir was removed: %s: %v", tmpDir, err)
 	}
