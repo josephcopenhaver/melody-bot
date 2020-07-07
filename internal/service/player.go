@@ -85,6 +85,7 @@ type Track struct {
 
 type playRequest struct {
 	track *Track
+	patch bool
 }
 
 type PlayerMemory struct {
@@ -112,10 +113,10 @@ func (m *PlayerMemory) reset() {
 	}
 }
 
-func (m *PlayerMemory) indexOfTrack(file string) int {
+func (m *PlayerMemory) indexOfTrack(url string) int {
 
 	for i, t := range m.tracks {
-		if t.audioFile == file {
+		if t.Url == url {
 			return i
 		}
 	}
@@ -127,28 +128,51 @@ func (m *PlayerMemory) play(s State) {
 
 	r := <-m.playRequests
 
-	if r.track != nil {
-		t := *r.track
+	if r.track == nil {
+		return
+	}
+
+	t := *r.track
+
+	if r.patch {
+		// only changes the record value if a match can be found in the playlist
+		// and it is clearly missing an audioFile
+		//
+		// does not attempt to insert it
+		i := m.indexOfTrack(t.Url)
+		if i >= 0 && m.tracks[i].audioFile == "" {
+			m.tracks[i] = t
+		}
+	} else {
 
 		switch s {
 		case StateDefault:
 			m.tracks = []Track{t}
 			m.currentTrackIdx = -1
 		case StateIdle:
-			i := m.indexOfTrack(t.audioFile)
-			if i < 0 {
+			i := m.indexOfTrack(t.Url)
+			if i == -1 {
 				m.tracks = append(m.tracks, t)
+			} else if t.audioFile != "" && m.tracks[i].audioFile == "" {
+				// implicit patch
+				m.tracks[i] = t
 			}
 			m.currentTrackIdx = len(m.tracks) - 2
 		case StatePaused:
-			i := m.indexOfTrack(t.audioFile)
-			if i < 0 {
+			i := m.indexOfTrack(t.Url)
+			if i == -1 {
 				m.tracks = append(m.tracks, t)
+			} else if t.audioFile != "" && m.tracks[i].audioFile == "" {
+				// implicit patch
+				m.tracks[i] = t
 			}
 		case StatePlaying:
-			i := m.indexOfTrack(t.audioFile)
-			if i < 0 {
+			i := m.indexOfTrack(t.Url)
+			if i == -1 {
 				m.tracks = append(m.tracks, t)
+			} else if t.audioFile != "" && m.tracks[i].audioFile == "" {
+				// implicit patch
+				m.tracks[i] = t
 			}
 		}
 	}
@@ -248,22 +272,29 @@ func (p *Player) nextTrack() *Track {
 
 	p.withMemory(func(m *PlayerMemory) {
 
-		m.currentTrackIdx++
-		if m.currentTrackIdx >= len(m.tracks) {
-			if m.notLooping {
-				m.currentTrackIdx = -1
+		numCheckedTracks := 0
+
+		for numCheckedTracks < len(m.tracks) {
+
+			numCheckedTracks++
+			m.currentTrackIdx++
+
+			if m.currentTrackIdx >= len(m.tracks) {
+				if m.notLooping {
+					m.currentTrackIdx = -1
+					return
+				}
+				m.currentTrackIdx = 0
+			}
+
+			if m.tracks[m.currentTrackIdx].audioFile != "" {
+				track := m.tracks[m.currentTrackIdx]
+				result = &track
 				return
 			}
-			m.currentTrackIdx = 0
-		}
 
-		if m.currentTrackIdx < len(m.tracks) {
-			track := m.tracks[m.currentTrackIdx]
-			result = &track
-			return
+			m.currentTrackIdx = -1
 		}
-
-		m.currentTrackIdx = -1
 	})
 
 	return result
@@ -377,7 +408,7 @@ func (p *Player) CycleRepeatMode(srcEvt interface{}) string {
 	return result
 }
 
-func (p *Player) Play(srcEvt interface{}, url string, authorId, authorMention string, file string) bool {
+func (p *Player) Play(srcEvt interface{}, url string, authorId, authorMention string, file string, patch bool) bool {
 	var result bool
 
 	p.withMemory(func(m *PlayerMemory) {
@@ -389,6 +420,7 @@ func (p *Player) Play(srcEvt interface{}, url string, authorId, authorMention st
 				AuthorId:      authorId,
 				AuthorMention: authorMention,
 			},
+			patch: patch,
 		}
 
 		p.signalChan <- TracedSignal{srcEvt, SignalPlay}
@@ -462,28 +494,25 @@ func (p *Player) RemoveTrack(url string) bool {
 
 	p.withMemory(func(m *PlayerMemory) {
 
-		for i, t := range m.tracks {
-			if t.Url != url {
-				continue
-			}
+		i := m.indexOfTrack(url)
+		if i == -1 {
+			return
+		}
 
-			result = true
+		result = true
 
-			if len(m.tracks) == 0 {
-				m.tracks = nil
-				m.currentTrackIdx = -1
+		if len(m.tracks) <= 1 {
+			m.tracks = nil
+			m.currentTrackIdx = -1
 
-				break
-			}
+			return
+		}
 
-			copy(m.tracks[i:], m.tracks[i+1:])
-			m.tracks = m.tracks[:len(m.tracks)-1]
+		copy(m.tracks[i:], m.tracks[i+1:])
+		m.tracks = m.tracks[:len(m.tracks)-1]
 
-			if m.currentTrackIdx >= i {
-				m.currentTrackIdx -= 1
-			}
-
-			break
+		if m.currentTrackIdx >= i {
+			m.currentTrackIdx -= 1
 		}
 	})
 

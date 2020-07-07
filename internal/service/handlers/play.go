@@ -254,13 +254,23 @@ func playAfterTranscode(s *discordgo.Session, m *discordgo.MessageCreate, p *ser
 					Msg("failed to send play from cache confirmation")
 			}
 
-			play(p, m, urlStr, cacheDir)
+			play(p, m, urlStr, cacheDir, false)
 
 			return permit.Done()
 		}
 	}
 
-	_, err = s.ChannelMessageSend(m.ChannelID, "```\ndownloading audio file: "+urlStr+"\n```")
+	// deferRemoveTrack will become a nop once transcoding is finalized
+	deferRemoveTrack := func() {
+		p.RemoveTrack(urlStr)
+	}
+
+	play(p, m, urlStr, "", false)
+	defer func() {
+		deferRemoveTrack()
+	}()
+
+	_, err = s.ChannelMessageSend(m.ChannelID, "```\ndownloading audio file:\n"+urlStr+"\n```")
 	if err != nil {
 		log.Err(err).
 			Msg("failed to send download start msg")
@@ -301,12 +311,13 @@ func playAfterTranscode(s *discordgo.Session, m *discordgo.MessageCreate, p *ser
 
 		// TODO: instead of deleting incomplete downloads, try appending to whatever previous progress has been done
 
-		cleanup := func() {
-			f.Close()
+		// deferDeleteFile will become a nop after the download is fully confirmed
+		// using defer to ensure the cleanup occurs even if there is a panic
+		deferDeleteFile := func() {
 			os.Remove(dstFilePath)
 		}
 		defer func() {
-			cleanup()
+			deferDeleteFile()
 		}()
 
 		err = dlc.Download(context.Background(), vidInfo, dstFormat, f)
@@ -314,15 +325,20 @@ func playAfterTranscode(s *discordgo.Session, m *discordgo.MessageCreate, p *ser
 			return err
 		}
 
-		cleanup = func() {}
+		err = f.Close()
+		if err != nil {
+			return err
+		}
 
-		return f.Close()
+		deferDeleteFile = func() {}
+
+		return nil
 	}()
 	if err != nil {
 		return fmt.Errorf("download interrupted: %v", err)
 	}
 
-	_, err = s.ChannelMessageSend(m.ChannelID, "```\ndownload complete, transcode starting: "+urlStr+"\n```")
+	_, err = s.ChannelMessageSend(m.ChannelID, "```\ndownload complete, transcode starting:\n"+urlStr+"\n```")
 	if err != nil {
 		log.Err(err).
 			Msg("failed to send download done msg")
@@ -345,15 +361,22 @@ func playAfterTranscode(s *discordgo.Session, m *discordgo.MessageCreate, p *ser
 	}
 	_ = fi.Close() // don't care about error here, just wanted to create the file and we did
 
-	_, err = s.ChannelMessageSend(m.ChannelID, "```\ntranscode complete, queuing: "+urlStr+"\n```")
+	_, err = s.ChannelMessageSend(m.ChannelID, "```\ntranscode complete, queuing:\n"+urlStr+"\n```")
 	if err != nil {
 		log.Err(err).
 			Msg("failed to send download done msg")
 	}
 
-	play(p, m, urlStr, cacheDir)
+	err = permit.Done()
+	if err != nil {
+		return err
+	}
 
-	return permit.Done()
+	play(p, m, urlStr, cacheDir, true)
+
+	deferRemoveTrack = func() {}
+
+	return nil
 }
 
 func findVoiceChannel(s *discordgo.Session, m *discordgo.MessageCreate, p *service.Player) (*discordgo.VoiceConnection, error) {
@@ -396,7 +419,14 @@ func findVoiceChannel(s *discordgo.Session, m *discordgo.MessageCreate, p *servi
 	return nil, nil
 }
 
+// extractAudioMutex prevents more than one transcoding activity
+// from occuring at any given point in time
+var extractAudioMutex sync.Mutex
+
 func extractAudio(vidPath string) error {
+
+	extractAudioMutex.Lock()
+	defer extractAudioMutex.Unlock()
 
 	log.Warn().
 		Str("file", vidPath).
@@ -482,9 +512,14 @@ func extractAudio(vidPath string) error {
 	return nil
 }
 
-func play(p *service.Player, m *discordgo.MessageCreate, url string, cacheDir string) {
+// play can be called multiple times
+// when the cacheDir is not empty then the file will be playable
+func play(p *service.Player, m *discordgo.MessageCreate, url string, cacheDir string, patch bool) {
+	var audioFile string
 
-	audioFile := path.Join(cacheDir, AudioFileName)
+	if cacheDir != "" {
+		audioFile = path.Join(cacheDir, AudioFileName)
+	}
 
-	p.Play(m, url, m.Message.Author.ID, m.Author.Mention(), audioFile)
+	p.Play(m, url, m.Message.Author.ID, m.Author.Mention(), audioFile, patch)
 }

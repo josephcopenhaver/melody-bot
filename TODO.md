@@ -17,8 +17,9 @@
 - [x] when direct message the bot, echo results back to the user, but also log playback activity to the "target logical log channel"
 - [x] handler providers should return a struct rather than a function of components, this way we can use interfaces and simplfy the hander.go code
 - [x] a command to remove a track from the playlist
-- [ ] place tracks in playlist while they are transcoding so order can be preserved
+- [x] place tracks in playlist while they are transcoding so order can be preserved
 - [ ] if removing a track in the middle of transcoding, then cancel the transcoding operation
 - [x] place author mention into track record so when the track plays we know who to thank when it plays
 - [x] only start playing to a channel when there are members listening in that channel
 - [x] on channel change pause playback if no one is in the new channel
+- [x] only transcode one file at a time
