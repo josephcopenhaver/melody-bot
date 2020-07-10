@@ -14,6 +14,11 @@ import (
 	"github.com/rs/zerolog/log"
 )
 
+const (
+	NicenessNormal = 0
+	NicenessMax    = 19
+)
+
 var nicenessMutex sync.Mutex
 var nicenessInitialized int32
 var nicenessCanChange int32
@@ -182,7 +187,6 @@ func setNiceness(niceness int) error {
 	return nil
 }
 
-// FreezeNiceness is not thread safe
 func FreezeNiceness() error {
 	nicenessMutex.Lock()
 	defer nicenessMutex.Unlock()

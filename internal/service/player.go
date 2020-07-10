@@ -88,6 +88,11 @@ type playRequest struct {
 	patch bool
 }
 
+type Playlist struct {
+	Tracks          []Track
+	CurrentTrackIdx int
+}
+
 type PlayerMemory struct {
 	voiceChannelId  string
 	voiceConnection *discordgo.VoiceConnection
@@ -221,12 +226,19 @@ func (m *PlayerMemory) hasAudience(s *discordgo.Session, guildId string) bool {
 	return false
 }
 
+type PlayerStateMachine struct {
+	state    State
+	niceness int
+}
+
 type Player struct {
 	mutex          sync.RWMutex
 	memory         atomic.Value
 	discordSession *discordgo.Session
 	discordGuildId string
-	signalChan     chan TracedSignal
+
+	stateMachine PlayerStateMachine
+	signalChan   chan TracedSignal
 }
 
 func NewPlayer(s *discordgo.Session, guildId string) *Player {
@@ -235,6 +247,10 @@ func NewPlayer(s *discordgo.Session, guildId string) *Player {
 		discordSession: s,
 		discordGuildId: guildId,
 		signalChan:     make(chan TracedSignal, 1),
+		stateMachine: PlayerStateMachine{
+			state:    StateDefault,
+			niceness: NicenessMax,
+		},
 	}
 
 	playRequests := make(chan *playRequest, 1)
@@ -243,29 +259,14 @@ func NewPlayer(s *discordgo.Session, guildId string) *Player {
 		playRequests:    playRequests,
 		currentTrackIdx: -1,
 	})
-	go playerWorker(p, p.signalChan)
+	go p.playerGoroutine()
 
 	return p
 }
 
-func (p *Player) notifyNoAudience(debug func() *zerolog.Event, s Signal) {
-	p.broadcastTextMessage(debug, "cannot process \""+s.String()+"\" request at this time: there is no audience")
+func (p *Player) notifyNoAudience(s Signal) {
+	p.broadcastTextMessage("cannot process \"" + s.String() + "\" request at this time: there is no audience")
 }
-
-// // setNextTrackIndex returns true if index is in playlist range
-// func (p *Player) setNextTrackIndex(idx int) bool {
-// 	var result bool
-
-// 	p.withMemory(func(m *PlayerMemory) {
-
-// 		if idx >= 0 && idx < len(m.tracks) {
-// 			result = true
-// 			m.currentTrackIdx = idx - 1
-// 		}
-// 	})
-
-// 	return result
-// }
 
 func (p *Player) nextTrack() *Track {
 	var result *Track
@@ -408,6 +409,10 @@ func (p *Player) CycleRepeatMode(srcEvt interface{}) string {
 	return result
 }
 
+// TODO: Play should not return a bool
+// instead there should be a gatekeeping method that can answer the question:
+// can this play request lead to a broadcast to an audience?
+
 func (p *Player) Play(srcEvt interface{}, url string, authorId, authorMention string, file string, patch bool) bool {
 	var result bool
 
@@ -466,7 +471,7 @@ func (p *Player) SetTextChannel(s string) {
 		m.textChannel = s
 	})
 
-	p.broadcastTextMessage(nil, "text channel is now this one")
+	p.broadcastTextMessage("text channel is now this one")
 }
 
 func (p *Player) GetVoiceChannelId() string {
@@ -519,11 +524,6 @@ func (p *Player) RemoveTrack(url string) bool {
 	return result
 }
 
-type Playlist struct {
-	Tracks          []Track
-	CurrentTrackIdx int
-}
-
 func (p *Player) GetPlaylist() Playlist {
 	var result Playlist
 
@@ -567,7 +567,7 @@ func (p *Player) setDefaultTextChannel(v interface{}) {
 	}
 }
 
-func (p *Player) broadcastTextMessage(debug func() *zerolog.Event, s string) {
+func (p *Player) broadcastTextMessage(s string) {
 	var c string
 
 	p.withMemory(func(m *PlayerMemory) {
@@ -578,14 +578,10 @@ func (p *Player) broadcastTextMessage(debug func() *zerolog.Event, s string) {
 		return
 	}
 
-	if debug != nil {
-		l := debug()
-		if l != nil {
-			l.
-				Str("notification_message", s).
-				Msg("broadcasting notification")
-		}
-	}
+	log.Debug().
+		Str("guild_id", p.discordGuildId).
+		Str("notification_message", s).
+		Msg("broadcasting notification")
 
 	_, err := p.discordSession.ChannelMessageSend(c, s)
 	if err != nil {
@@ -595,7 +591,7 @@ func (p *Player) broadcastTextMessage(debug func() *zerolog.Event, s string) {
 	}
 }
 
-func (p *Player) sendChannel(debug func() *zerolog.Event) chan<- []byte {
+func (p *Player) sendChannel() chan<- []byte {
 	var c *discordgo.VoiceConnection
 	var result chan<- []byte
 
@@ -604,7 +600,7 @@ func (p *Player) sendChannel(debug func() *zerolog.Event) chan<- []byte {
 	})
 
 	if c == nil {
-		p.broadcastTextMessage(debug, "no active voice channel")
+		p.broadcastTextMessage("no active voice channel")
 		return result
 	}
 
@@ -612,52 +608,49 @@ func (p *Player) sendChannel(debug func() *zerolog.Event) chan<- []byte {
 	defer c.Unlock()
 
 	if !c.Ready {
-		p.broadcastTextMessage(debug, "voice channel not ready")
+		p.broadcastTextMessage("voice channel not ready")
 		return result
 	}
 
 	result = c.OpusSend
 
 	if result == nil {
-		p.broadcastTextMessage(debug, "voice channel has no sender")
+		p.broadcastTextMessage("voice channel has no sender")
 	}
 
 	return result
 }
 
-func playerWorker(p *Player, sigChan <-chan TracedSignal) {
+func (p *Player) debug() *zerolog.Event {
+	return log.Debug().
+		Interface("state", p.stateMachine.state).
+		Str("guild_id", p.discordGuildId)
+}
 
-	state := StateDefault
-	niceness := 19
+func (p *Player) setNiceness(n int) error {
 
-	debug := func() *zerolog.Event {
-		return log.Debug().
-			Interface("state", state).
-			Str("guild_id", p.discordGuildId)
-	}
-
-	setNiceness := func(n int) error {
-
-		if niceness == n {
-
-			return nil
-		}
-
-		err := SetNiceness(n)
-		if err != nil {
-			return err
-		}
-
-		niceness = n
+	if p.stateMachine.niceness == n {
 
 		return nil
 	}
 
+	err := SetNiceness(n)
+	if err != nil {
+		return err
+	}
+
+	p.stateMachine.niceness = n
+
+	return nil
+}
+
+func (p *Player) playerGoroutine() {
+
 	defer func() {
-		debug().Msg("player: permanently broken")
+		p.debug().Msg("player: permanently broken")
 	}()
 
-	debug().Msg("player: starting")
+	p.debug().Msg("player: starting")
 
 	for {
 		func() {
@@ -665,12 +658,12 @@ func playerWorker(p *Player, sigChan <-chan TracedSignal) {
 				if r := recover(); r != nil {
 					log.Error().
 						Interface("error", r).
-						Interface("state", state).
+						Interface("state", p.stateMachine.state).
 						Str("guild_id", p.discordGuildId).
 						Msg("player: recovered from panic")
 				}
 			}()
-			err := playerMainLoop(p, &state, debug, setNiceness, sigChan)
+			err := p.playerStateMachine()
 			if err != nil {
 				log.Err(err).Msg("player: error occured during playback")
 			}
@@ -678,22 +671,22 @@ func playerWorker(p *Player, sigChan <-chan TracedSignal) {
 	}
 }
 
-func playerMainLoop(p *Player, statePtr *State, debug func() *zerolog.Event, setNiceness func(int) error, sigChan <-chan TracedSignal) error {
+func (p *Player) playerStateMachine() error {
 	var err error
 	var sendChan chan<- []byte
 
-	debug().Msg("player: main loop start: signal check")
+	p.debug().Msg("player: main loop start: signal check")
 
-	switch *statePtr {
+	switch p.stateMachine.state {
 	case StateDefault:
 		// signal trap 1/4:
 		// type: blocking
 		// signals recognized when in initial state
-		s := <-sigChan
+		s := <-p.signalChan
 
 		p.setDefaultTextChannel(s.src)
 
-		debug().Msg("player: got signal before playing track")
+		p.debug().Msg("player: got signal before playing track")
 
 		switch s.sig {
 		case SignalNewVoiceConnection:
@@ -702,20 +695,20 @@ func playerMainLoop(p *Player, statePtr *State, debug func() *zerolog.Event, set
 			hasAudience := false
 
 			p.withMemory(func(m *PlayerMemory) {
-				m.play(*statePtr)
+				m.play(p.stateMachine.state)
 				hasAudience = m.hasAudience(p.discordSession, p.discordGuildId)
 			})
 
 			if !hasAudience {
-				p.notifyNoAudience(debug, s.sig)
-				*statePtr = StateIdle
+				p.notifyNoAudience(s.sig)
+				p.stateMachine.state = StateIdle
 				return nil
 			}
 
-			*statePtr = StatePlaying
+			p.stateMachine.state = StatePlaying
 		}
 	case StateIdle:
-		err = setNiceness(19)
+		err = p.setNiceness(NicenessMax)
 		if err != nil {
 			return err
 		}
@@ -723,33 +716,33 @@ func playerMainLoop(p *Player, statePtr *State, debug func() *zerolog.Event, set
 		// signal trap 2/4:
 		// type: blocking
 		// signals recognized when in idle state ( stopped or partially errored )
-		s := <-sigChan
+		s := <-p.signalChan
 
-		debug().Msg("player: got signal before playing track")
+		p.debug().Msg("player: got signal before playing track")
 
 		switch s.sig {
 		case SignalNewVoiceConnection:
 			sendChan = nil
 		case SignalReset:
 			p.reset()
-			*statePtr = StateIdle
+			p.stateMachine.state = StateIdle
 			return nil
 		case SignalPlay:
 			hasAudience := false
 
 			p.withMemory(func(m *PlayerMemory) {
-				m.play(*statePtr)
+				m.play(p.stateMachine.state)
 				hasAudience = m.hasAudience(p.discordSession, p.discordGuildId)
 			})
 
 			if !hasAudience {
-				p.notifyNoAudience(debug, s.sig)
+				p.notifyNoAudience(s.sig)
 				return nil
 			}
 
-			*statePtr = StatePlaying
+			p.stateMachine.state = StatePlaying
 		case SignalResume:
-			*statePtr = StatePlaying
+			p.stateMachine.state = StatePlaying
 		case SignalNext:
 			// do nothing, let loop normally advance
 		case SignalPrevious:
@@ -762,25 +755,25 @@ func playerMainLoop(p *Player, statePtr *State, debug func() *zerolog.Event, set
 		}
 	}
 
-	debug().Msg("player: play check")
+	p.debug().Msg("player: play check")
 
-	if *statePtr != StatePlaying {
+	if p.stateMachine.state != StatePlaying {
 
-		debug().Msg("player: not playing")
+		p.debug().Msg("player: not playing")
 
-		*statePtr = StateIdle
+		p.stateMachine.state = StateIdle
 
 		return nil
 	}
 
 	if sendChan == nil {
-		sendChan = p.sendChannel(debug)
+		sendChan = p.sendChannel()
 
 		if sendChan == nil {
 
-			debug().Msg("player: trying to play, but no broadcast channel is ready")
+			p.debug().Msg("player: trying to play, but no broadcast channel is ready")
 
-			*statePtr = StateIdle
+			p.stateMachine.state = StateIdle
 
 			return nil
 		}
@@ -788,7 +781,7 @@ func playerMainLoop(p *Player, statePtr *State, debug func() *zerolog.Event, set
 
 	track := p.nextTrack()
 	if track == nil {
-		*statePtr = StateIdle
+		p.stateMachine.state = StateIdle
 		return nil
 	} else {
 
@@ -797,10 +790,10 @@ func playerMainLoop(p *Player, statePtr *State, debug func() *zerolog.Event, set
 			msg += " ( added by " + track.AuthorMention + " )"
 		}
 
-		p.broadcastTextMessage(debug, msg)
+		p.broadcastTextMessage(msg)
 	}
 
-	err = setNiceness(0)
+	err = p.setNiceness(NicenessNormal)
 	if err != nil {
 		return err
 	}
@@ -821,33 +814,33 @@ func playerMainLoop(p *Player, statePtr *State, debug func() *zerolog.Event, set
 
 		noSignal := false
 
-		// debug().Msg("player: broadcast loop start: signal check")
+		// p.debug().Msg("player: broadcast loop start: signal check")
 
 		select {
 		// signal trap 3/4:
 		// type: non-blocking
 		// signals recognized when in playing state
-		case s := <-sigChan:
+		case s := <-p.signalChan:
 			switch s.sig {
 			case SignalNewVoiceConnection:
-				sendChan = p.sendChannel(debug)
+				sendChan = p.sendChannel()
 				if sendChan == nil {
 					return nil
 				}
 			case SignalPlay:
 				p.withMemory(func(m *PlayerMemory) {
-					m.play(*statePtr)
+					m.play(p.stateMachine.state)
 				})
 			case SignalPrevious:
 				p.previousTrack()
 				return nil
 			case SignalStop:
 				p.restartTrack()
-				*statePtr = StateIdle
+				p.stateMachine.state = StateIdle
 				return nil
 			case SignalReset:
 				p.reset()
-				*statePtr = StateIdle
+				p.stateMachine.state = StateIdle
 				return nil
 			case SignalNext:
 				return nil
@@ -855,9 +848,9 @@ func playerMainLoop(p *Player, statePtr *State, debug func() *zerolog.Event, set
 				p.restartTrack()
 				return nil
 			case SignalPause:
-				*statePtr = StatePaused
+				p.stateMachine.state = StatePaused
 
-				err = setNiceness(19)
+				err = p.setNiceness(NicenessMax)
 				if err != nil {
 					return err
 				}
@@ -867,45 +860,45 @@ func playerMainLoop(p *Player, statePtr *State, debug func() *zerolog.Event, set
 					// signal trap 4/4:
 					// type: blocking
 					// signals recognized when in paused state
-					s := <-sigChan
+					s := <-p.signalChan
 					switch s.sig {
 					case SignalNewVoiceConnection:
 						sendChan = nil
 					case SignalPlay:
 						p.withMemory(func(m *PlayerMemory) {
-							m.play(*statePtr)
+							m.play(p.stateMachine.state)
 						})
 
 						broadcastMsg := "player is paused; to resume playback send the following message:\n\n" +
 							p.discordSession.State.User.Mention() + " resume"
 
-						p.broadcastTextMessage(debug, broadcastMsg)
+						p.broadcastTextMessage(broadcastMsg)
 					case SignalPrevious:
 						p.previousTrack()
-						*statePtr = StateIdle
+						p.stateMachine.state = StateIdle
 						return nil
 					case SignalNext:
-						*statePtr = StateIdle
+						p.stateMachine.state = StateIdle
 						return nil
 					case SignalStop:
 						p.restartTrack()
-						*statePtr = StateIdle
+						p.stateMachine.state = StateIdle
 						return nil
 					case SignalRestartTrack:
 						p.restartTrack()
-						*statePtr = StateIdle
+						p.stateMachine.state = StateIdle
 						return nil
 					case SignalReset:
 						p.reset()
-						*statePtr = StateIdle
+						p.stateMachine.state = StateIdle
 						return nil
 					case SignalResume:
-						*statePtr = StatePlaying
+						p.stateMachine.state = StatePlaying
 						break PausedLoop
 					}
 				}
 
-				err = setNiceness(0)
+				err = p.setNiceness(NicenessNormal)
 				if err != nil {
 					return err
 				}
@@ -913,7 +906,7 @@ func playerMainLoop(p *Player, statePtr *State, debug func() *zerolog.Event, set
 				// rediscover the channel we need to send on
 				// if it was altered while paused
 				if sendChan == nil {
-					sendChan = p.sendChannel(debug)
+					sendChan = p.sendChannel()
 					if sendChan == nil {
 						return nil
 					}
@@ -924,7 +917,7 @@ func playerMainLoop(p *Player, statePtr *State, debug func() *zerolog.Event, set
 		}
 
 		if !noSignal {
-			debug().Msg("player: processed signal while playing")
+			p.debug().Msg("player: processed signal while playing")
 		}
 
 		numBytes, err := opusReader.ReadPacket(outPackets[outPacketIdx][:])

@@ -24,3 +24,4 @@
 - [x] on channel change pause playback if no one is in the new channel
 - [x] only transcode one file at a time to prevent CPU exhaustion
 - [ ] provide a way for a user to configure how many files can be transcoded at once
+- [ ] push transcoding into a transcodeManager instead of using the play handler

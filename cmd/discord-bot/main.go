@@ -53,7 +53,7 @@ func main() {
 	service.NicenessInit()
 
 	// set process niceness as high as possible until sending rtp traffic
-	err = service.SetNiceness(19)
+	err = service.SetNiceness(service.NicenessMax)
 	if err != nil {
 		log.Fatal().
 			Err(err).
