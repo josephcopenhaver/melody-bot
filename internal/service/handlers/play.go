@@ -193,6 +193,10 @@ func playAfterTranscode(s *discordgo.Session, m *discordgo.MessageCreate, p *ser
 		}
 	}
 
+	if !p.HasAudience() {
+		return errors.New("no audience in voice channel")
+	}
+
 	dlc := ytdl.Client{
 		HTTPClient: http.DefaultClient,
 		Logger:     log.Logger,

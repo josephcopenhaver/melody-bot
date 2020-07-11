@@ -409,13 +409,7 @@ func (p *Player) CycleRepeatMode(srcEvt interface{}) string {
 	return result
 }
 
-// TODO: Play should not return a bool
-// instead there should be a gatekeeping method that can answer the question:
-// can this play request lead to a broadcast to an audience?
-
-func (p *Player) Play(srcEvt interface{}, url string, authorId, authorMention string, file string, patch bool) bool {
-	var result bool
-
+func (p *Player) Play(srcEvt interface{}, url string, authorId, authorMention string, file string, patch bool) {
 	p.withMemory(func(m *PlayerMemory) {
 
 		m.playRequests <- &playRequest{
@@ -431,8 +425,6 @@ func (p *Player) Play(srcEvt interface{}, url string, authorId, authorMention st
 		p.signalChan <- TracedSignal{srcEvt, SignalPlay}
 
 	})
-
-	return result
 }
 
 func (p *Player) SetVoiceConnection(srcEvt interface{}, channelId string, c *discordgo.VoiceConnection) {
