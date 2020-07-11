@@ -1,7 +1,7 @@
 version: "3.7"
 
 services:
-  discord-bot:
+  melody-bot:
     build:
       context: $PWD
       dockerfile: $PWD/docker/default/Dockerfile

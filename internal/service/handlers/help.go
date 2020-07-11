@@ -4,7 +4,7 @@ import (
 	"sort"
 
 	"github.com/bwmarrin/discordgo"
-	"github.com/josephcopenhaver/discord-bot/internal/service"
+	"github.com/josephcopenhaver/melody-bot/internal/service"
 )
 
 func Help(inputHandlers []HandleMessageCreate) HandleMessageCreate {

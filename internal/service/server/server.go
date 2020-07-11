@@ -6,8 +6,8 @@ import (
 	"syscall"
 
 	"github.com/bwmarrin/discordgo"
-	"github.com/josephcopenhaver/discord-bot/internal/service"
-	"github.com/josephcopenhaver/discord-bot/internal/service/handlers"
+	"github.com/josephcopenhaver/melody-bot/internal/service"
+	"github.com/josephcopenhaver/melody-bot/internal/service/handlers"
 	"github.com/rs/zerolog/log"
 )
 

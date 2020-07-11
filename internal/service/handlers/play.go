@@ -19,7 +19,7 @@ import (
 	"github.com/bwmarrin/discordgo"
 	"github.com/rylio/ytdl"
 
-	"github.com/josephcopenhaver/discord-bot/internal/service"
+	"github.com/josephcopenhaver/melody-bot/internal/service"
 )
 
 const (
@@ -191,6 +191,10 @@ func playAfterTranscode(s *discordgo.Session, m *discordgo.MessageCreate, p *ser
 		if c == nil {
 			return errors.New("not in a voice channel")
 		}
+	}
+
+	if !p.HasAudience() {
+		return errors.New("no audience in voice channel")
 	}
 
 	dlc := ytdl.Client{

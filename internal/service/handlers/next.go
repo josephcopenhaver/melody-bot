@@ -2,7 +2,7 @@ package handlers
 
 import (
 	"github.com/bwmarrin/discordgo"
-	"github.com/josephcopenhaver/discord-bot/internal/service"
+	"github.com/josephcopenhaver/melody-bot/internal/service"
 )
 
 func Next() HandleMessageCreate {

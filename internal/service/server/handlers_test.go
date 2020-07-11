@@ -3,7 +3,7 @@ package server
 import (
 	"testing"
 
-	"github.com/josephcopenhaver/discord-bot/internal/service/testing/testconfig"
+	"github.com/josephcopenhaver/melody-bot/internal/service/testing/testconfig"
 	. "github.com/smartystreets/goconvey/convey"
 )
 
