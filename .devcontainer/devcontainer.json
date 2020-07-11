@@ -1,10 +1,10 @@
 {
-  "image": "josephcopenhaver/discord-bot--shell:latest",
+  "image": "josephcopenhaver/melody-bot--shell:latest",
   "workspaceMount": "source=${localWorkspaceFolder},target=/workspace,type=bind,consistency=delegated",
   "workspaceFolder": "/workspace",
   "runArgs": [
     "--network",
-    "josephcopenhaver--discord-bot--infrastructure",
+    "josephcopenhaver--melody-bot--infrastructure",
     "-e",
     "AWS_ACCESS_KEY_ID",
     "-e",
@@ -22,7 +22,7 @@
     "-e",
     "IN_DOCKER_CONTAINER=true",
     "--name",
-    "infrastructure--josephcopenhaver--discord-bot--shell",
+    "infrastructure--josephcopenhaver--melody-bot--shell",
     "--env-file",
     "${localWorkspaceFolder}/.devcontainer/env"
   ],

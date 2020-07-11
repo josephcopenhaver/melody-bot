@@ -6,7 +6,7 @@ import (
 	"strings"
 
 	"github.com/bwmarrin/discordgo"
-	"github.com/josephcopenhaver/discord-bot/internal/service"
+	"github.com/josephcopenhaver/melody-bot/internal/service"
 )
 
 // TODO: handle when a sysadmin moves the bot to another channel manually

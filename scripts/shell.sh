@@ -58,4 +58,4 @@ docker run \
     \
     --entrypoint bash \
     \
-    "josephcopenhaver/discord-bot--shell:${GIT_SHA:-latest}"
+    "josephcopenhaver/melody-bot--shell:${GIT_SHA:-latest}"

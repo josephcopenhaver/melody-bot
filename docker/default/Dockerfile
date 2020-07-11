@@ -1,5 +1,5 @@
 ARG SHELL_VERSION=latest
-FROM josephcopenhaver/discord-bot--shell:$SHELL_VERSION
+FROM josephcopenhaver/melody-bot--shell:$SHELL_VERSION
 
 # specify a working default working directory
 WORKDIR /workspace
@@ -40,4 +40,4 @@ COPY --from=0 /workspace/build/bin/ ./build/bin/
 
 ENV LOG_FORMAT=json
 
-ENTRYPOINT ["./build/bin/discord-bot"]
+ENTRYPOINT ["./build/bin/melody-bot"]

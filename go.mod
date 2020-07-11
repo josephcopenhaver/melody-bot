@@ -1,4 +1,4 @@
-module github.com/josephcopenhaver/discord-bot
+module github.com/josephcopenhaver/melody-bot
 
 go 1.14
 

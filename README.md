@@ -1,4 +1,4 @@
-# discord-bot
+# melody-bot
 
 My discord bot
 

@@ -7,8 +7,8 @@ import (
 	"io"
 	"os"
 
-	"github.com/josephcopenhaver/discord-bot/internal/logging"
-	"github.com/josephcopenhaver/discord-bot/internal/service"
+	"github.com/josephcopenhaver/melody-bot/internal/logging"
+	"github.com/josephcopenhaver/melody-bot/internal/service"
 	"github.com/rs/zerolog/log"
 )
 

@@ -3,10 +3,10 @@ package main
 import (
 	"os"
 
-	"github.com/josephcopenhaver/discord-bot/internal/logging"
-	"github.com/josephcopenhaver/discord-bot/internal/service"
-	"github.com/josephcopenhaver/discord-bot/internal/service/config"
-	"github.com/josephcopenhaver/discord-bot/internal/service/server"
+	"github.com/josephcopenhaver/melody-bot/internal/logging"
+	"github.com/josephcopenhaver/melody-bot/internal/service"
+	"github.com/josephcopenhaver/melody-bot/internal/service/config"
+	"github.com/josephcopenhaver/melody-bot/internal/service/server"
 	"github.com/rs/zerolog/log"
 )
 
@@ -28,7 +28,7 @@ func main() {
 	log.Info().
 		Str("Version", service.Version).
 		Str("Commit", service.Commit).
-		Msg("starting discord-bot")
+		Msg("starting melody-bot")
 
 	conf, err := config.New()
 	if err != nil {
