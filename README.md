@@ -41,6 +41,15 @@ BUILD=y ./scripts/up.sh
 ./scripts/clean.sh
 ```
 
+## required bot permissions
+
+- View Channels
+- Send Messages
+- Send TTS Messages ( not used yet )
+- Embed Links ( not used yet )
+- Connect
+- Speak
+
 ## supported bot commands
 
 output of "@bot help" in a guild channel or "help" when talking to the bot in a DM:

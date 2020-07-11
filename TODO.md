@@ -1,6 +1,6 @@
 - [x] volume normalization ( a little on the loud side, just like https://github.com/Just-Some-Bots/MusicBot/commit/0659da8c60880840bd767a96a893ec1ecc603076 )
 - [x] be able to play a video from youtube
-- [ ] document required bot permissions: https://discordpy.readthedocs.io/en/latest/discord.html here https://discord.com/developers/applications
+- [x] document required bot permissions: https://discordpy.readthedocs.io/en/latest/discord.html here https://discord.com/developers/applications
 - [ ] document an easy way for users to create their own bot: heroku app?
 - [x] auto join the voice channel a guild member is in when they ask you to play a file ( if not already in a voice channel )
 - [x] encode to discord friendly 8bit opus format
