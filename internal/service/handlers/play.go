@@ -4,7 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net/http"
+	"io"
 	"os"
 	"os/exec"
 	"path"
@@ -17,7 +17,7 @@ import (
 	"github.com/rs/zerolog/log"
 
 	"github.com/bwmarrin/discordgo"
-	"github.com/rylio/ytdl"
+	"github.com/kkdai/youtube/v2"
 
 	"github.com/josephcopenhaver/melody-bot/internal/service"
 )
@@ -197,16 +197,11 @@ func playAfterTranscode(ctx context.Context, s *discordgo.Session, m *discordgo.
 		return errors.New("no audience in voice channel")
 	}
 
-	dlc := ytdl.Client{
-		HTTPClient: http.DefaultClient,
-		Logger:     log.Logger,
-	}
+	var dlc youtube.Client
 
-	vidInfo, err := dlc.GetVideoInfo(ctx, urlStr)
+	vidInfo, err := dlc.GetVideoContext(ctx, urlStr)
 	if err != nil {
-		return fmt.Errorf("failed to get video info: %v", err)
-	} else if vidInfo.ID == "" {
-		return errors.New("failed to get video id")
+		return err
 	}
 
 	// log.Debug().
@@ -215,9 +210,9 @@ func playAfterTranscode(ctx context.Context, s *discordgo.Session, m *discordgo.
 
 	cacheDir := path.Join(".media-cache", "v1", vidInfo.ID)
 	downloadedRef := path.Join(cacheDir, ".dl-complete")
+	dstFilePath := path.Join(cacheDir, "video.mp4")
 
-	err = os.MkdirAll(cacheDir, os.ModePerm)
-	if err != nil {
+	if err := os.MkdirAll(cacheDir, os.ModePerm); err != nil {
 		return fmt.Errorf("failed to make cache directory: %s: %v", cacheDir, err)
 	}
 
@@ -280,24 +275,70 @@ func playAfterTranscode(ctx context.Context, s *discordgo.Session, m *discordgo.
 			Msg("failed to send download start msg")
 	}
 
-	var dstFilePath string
-	var dstFormat *ytdl.Format
+	formats := vidInfo.Formats.Type("video/mp4")
+	var dstFormat *youtube.Format
+	var srcReader io.ReadCloser
+	var srcSize int64
+	defer func() {
+		if srcReader == nil {
+			return
+		}
+		srcReader.Close()
+	}()
 
-	// TODO: find the lowest size video format
-	for _, f := range vidInfo.Formats {
+	formats.Sort()
 
-		if strings.ToLower(f.Extension) != "mp4" {
+	for _, f := range formats {
+
+		if f.AudioChannels <= 0 {
 			continue
 		}
 
-		dstFilePath = path.Join(cacheDir, "video.mp4")
-		dstFormat = f
-		break
+		// TODO: in the future try to select the lowest bitrate
+		// if dstFormat != nil {
+		// 	if dstFormat.Bitrate <= f.Bitrate {
+		// 		continue
+		// 	}
+		// }
+
+		n := f
+
+		newReader, newSize, err := dlc.GetStreamContext(ctx, vidInfo, &n)
+		if err != nil {
+			continue
+		}
+
+		if newSize == 0 {
+			// log.Warn().Msg("found stream with no size")
+			newReader.Close()
+			continue
+		}
+
+		// choose new stream context
+
+		if srcReader != nil {
+			srcReader.Close()
+		}
+
+		dstFormat = &n
+		srcReader = newReader
+		srcSize = newSize
 	}
 
 	if dstFormat == nil {
 		return errors.New("failed to find a usable video format")
 	}
+
+	log.Info().
+		Int("ItagNo", dstFormat.ItagNo).
+		Int("Bitrate", dstFormat.Bitrate).
+		Str("AudioQuality", dstFormat.AudioQuality).
+		Str("AudioSampleRate", dstFormat.AudioSampleRate).
+		Str("Quality", dstFormat.Quality).
+		Str("QualityLabel", dstFormat.QualityLabel).
+		Str("URL", dstFormat.URL).
+		Int("AudioChannels", dstFormat.AudioChannels).
+		Msg("found video format")
 
 	log.Warn().
 		Str("author_id", m.Author.ID).
@@ -312,6 +353,12 @@ func playAfterTranscode(ctx context.Context, s *discordgo.Session, m *discordgo.
 		if err != nil {
 			return err
 		}
+		var close func() error
+		close = func() error {
+			close = func() error { return nil }
+			return f.Close()
+		}
+		defer close()
 
 		// TODO: instead of deleting incomplete downloads, try appending to whatever previous progress has been done
 
@@ -324,12 +371,20 @@ func playAfterTranscode(ctx context.Context, s *discordgo.Session, m *discordgo.
 			deferDeleteFile()
 		}()
 
-		err = dlc.Download(ctx, vidInfo, dstFormat, f)
+		numBytes, err := io.Copy(f, srcReader)
 		if err != nil {
 			return err
 		}
 
-		err = f.Close()
+		if numBytes != srcSize {
+			return errors.New("downloaded incorrect number of bytes")
+		}
+
+		if numBytes == 0 {
+			return errors.New("failed to download any bytes")
+		}
+
+		err = close()
 		if err != nil {
 			return err
 		}

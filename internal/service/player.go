@@ -683,6 +683,8 @@ func (p *Player) playerGoroutine(wg *sync.WaitGroup) {
 			}
 		}()
 	}
+
+	p.reset()
 }
 
 var ErrDisposed = errors.New("player disposed")
