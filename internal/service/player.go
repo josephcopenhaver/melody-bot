@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"sync"
 	"sync/atomic"
 
@@ -77,11 +76,14 @@ func (s State) String() string {
 	}[int(s)]
 }
 
-type Track struct {
-	// private
-	audioFile string
+type AudioStreamer interface {
+	ReadCloser(context.Context, *sync.WaitGroup) (io.ReadCloser, error)
+	Cached() bool
+}
 
+type Track struct {
 	// public
+	AudioStreamer
 	Url           string
 	AuthorId      string
 	AuthorMention string
@@ -89,7 +91,6 @@ type Track struct {
 
 type playRequest struct {
 	track *Track
-	patch bool
 }
 
 type Playlist struct {
@@ -143,46 +144,26 @@ func (m *PlayerMemory) play(s State) {
 
 	t := *r.track
 
-	if r.patch {
-		// only changes the record value if a match can be found in the playlist
-		// and it is clearly missing an audioFile
-		//
-		// does not attempt to insert it
+	switch s {
+	case StateDefault:
+		m.tracks = []Track{t}
+		m.currentTrackIdx = -1
+	case StateIdle:
 		i := m.indexOfTrack(t.Url)
-		if i >= 0 && m.tracks[i].audioFile == "" {
-			m.tracks[i] = t
-		}
-	} else {
-
-		switch s {
-		case StateDefault:
-			m.tracks = []Track{t}
-			m.currentTrackIdx = -1
-		case StateIdle:
-			i := m.indexOfTrack(t.Url)
-			if i == -1 {
-				m.tracks = append(m.tracks, t)
-			} else if t.audioFile != "" && m.tracks[i].audioFile == "" {
-				// implicit patch
-				m.tracks[i] = t
-			}
+		if i == -1 {
+			m.tracks = append(m.tracks, t)
 			m.currentTrackIdx = len(m.tracks) - 2
-		case StatePaused:
-			i := m.indexOfTrack(t.Url)
-			if i == -1 {
-				m.tracks = append(m.tracks, t)
-			} else if t.audioFile != "" && m.tracks[i].audioFile == "" {
-				// implicit patch
-				m.tracks[i] = t
-			}
-		case StatePlaying:
-			i := m.indexOfTrack(t.Url)
-			if i == -1 {
-				m.tracks = append(m.tracks, t)
-			} else if t.audioFile != "" && m.tracks[i].audioFile == "" {
-				// implicit patch
-				m.tracks[i] = t
-			}
+		}
+		// TODO: else if already in track list, then consider moving track to end or moving the currentTrackIdx
+	case StatePaused:
+		i := m.indexOfTrack(t.Url)
+		if i == -1 {
+			m.tracks = append(m.tracks, t)
+		}
+	case StatePlaying:
+		i := m.indexOfTrack(t.Url)
+		if i == -1 {
+			m.tracks = append(m.tracks, t)
 		}
 	}
 }
@@ -237,6 +218,7 @@ type PlayerStateMachine struct {
 
 type Player struct {
 	ctx            context.Context
+	wg             *sync.WaitGroup
 	mutex          sync.RWMutex
 	memory         atomic.Value
 	discordSession *discordgo.Session
@@ -250,6 +232,7 @@ func NewPlayer(ctx context.Context, wg *sync.WaitGroup, s *discordgo.Session, gu
 
 	p := &Player{
 		ctx:            ctx,
+		wg:             wg,
 		discordSession: s,
 		discordGuildId: guildId,
 		signalChan:     make(chan TracedSignal, 1),
@@ -296,13 +279,8 @@ func (p *Player) nextTrack() *Track {
 				m.currentTrackIdx = 0
 			}
 
-			if m.tracks[m.currentTrackIdx].audioFile != "" {
-				track := m.tracks[m.currentTrackIdx]
-				result = &track
-				return
-			}
-
-			m.currentTrackIdx = -1
+			track := m.tracks[m.currentTrackIdx]
+			result = &track
 		}
 	})
 
@@ -417,17 +395,16 @@ func (p *Player) CycleRepeatMode(srcEvt interface{}) string {
 	return result
 }
 
-func (p *Player) Play(srcEvt interface{}, url string, authorId, authorMention string, file string, patch bool) {
+func (p *Player) Play(srcEvt interface{}, url string, authorId, authorMention string, as AudioStreamer) {
 	p.withMemory(func(m *PlayerMemory) {
 
 		m.playRequests <- &playRequest{
 			track: &Track{
-				audioFile:     file,
+				AudioStreamer: as,
 				Url:           url,
 				AuthorId:      authorId,
 				AuthorMention: authorMention,
 			},
-			patch: patch,
 		}
 
 		p.signalChan <- TracedSignal{srcEvt, SignalPlay}
@@ -662,6 +639,7 @@ func (p *Player) playerGoroutine(wg *sync.WaitGroup) {
 	}()
 
 	var done bool
+	var errCount int
 	for !done {
 		func() {
 			defer func() {
@@ -680,6 +658,20 @@ func (p *Player) playerGoroutine(wg *sync.WaitGroup) {
 					return
 				}
 				log.Err(err).Msg("player: error occurred during playback")
+
+				errCount++
+				var numTracks int
+				p.withMemory(func(m *PlayerMemory) {
+					numTracks = len(m.tracks)
+				})
+				if errCount >= numTracks {
+					// TODO: make this a stop action instead
+					log.Err(err).Msg("player: too many errors occurred, resetting playback")
+
+					p.reset()
+				}
+			} else {
+				errCount = 0
 			}
 		}()
 	}
@@ -820,9 +812,9 @@ func (p *Player) playerStateMachine() error {
 		return err
 	}
 
-	f, err := os.Open(track.audioFile)
+	f, err := track.ReadCloser(p.ctx, p.wg)
 	if err != nil {
-		return fmt.Errorf("failed to open audio file: %s: %v", track.audioFile, err)
+		return fmt.Errorf("failed to open audio stream: %s, %t: %v", track.Url, track.Cached(), err)
 	}
 	defer f.Close()
 
@@ -951,7 +943,7 @@ func (p *Player) playerStateMachine() error {
 			if err == io.EOF {
 				return nil
 			}
-			return fmt.Errorf("error reading file: %s: %v", track.audioFile, err)
+			return fmt.Errorf("error reading track: %s: %v", track.Url, err)
 		}
 
 		if numBytes == 0 {
