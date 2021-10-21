@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"regexp"
 
 	"github.com/bwmarrin/discordgo"
@@ -16,7 +17,7 @@ func ShowPlaylist() HandleMessageCreate {
 		newRegexMatcher(
 			true,
 			regexp.MustCompile(`^\s*show\s*playlist\s*$`),
-			func(s *discordgo.Session, m *discordgo.MessageCreate, p *service.Player, _ map[string]string) error {
+			func(_ context.Context, s *discordgo.Session, m *discordgo.MessageCreate, p *service.Player, _ map[string]string) error {
 
 				playlist := p.GetPlaylist()
 

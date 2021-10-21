@@ -174,7 +174,7 @@ func Play() HandleMessageCreate {
 	)
 }
 
-func playAfterTranscode(s *discordgo.Session, m *discordgo.MessageCreate, p *service.Player, args map[string]string) error {
+func playAfterTranscode(ctx context.Context, s *discordgo.Session, m *discordgo.MessageCreate, p *service.Player, args map[string]string) error {
 	urlStr := args["url"]
 
 	if urlStr == "" {
@@ -202,7 +202,7 @@ func playAfterTranscode(s *discordgo.Session, m *discordgo.MessageCreate, p *ser
 		Logger:     log.Logger,
 	}
 
-	vidInfo, err := dlc.GetVideoInfo(context.Background(), urlStr)
+	vidInfo, err := dlc.GetVideoInfo(ctx, urlStr)
 	if err != nil {
 		return fmt.Errorf("failed to get video info: %v", err)
 	} else if vidInfo.ID == "" {
@@ -264,7 +264,7 @@ func playAfterTranscode(s *discordgo.Session, m *discordgo.MessageCreate, p *ser
 		}
 	}
 
-	// deferRemoveTrack will become a nop once transcoding is finalized
+	// deferRemoveTrack will become a nop once transcoding is finalized and track has played completely
 	deferRemoveTrack := func() {
 		p.RemoveTrack(urlStr)
 	}
@@ -324,7 +324,7 @@ func playAfterTranscode(s *discordgo.Session, m *discordgo.MessageCreate, p *ser
 			deferDeleteFile()
 		}()
 
-		err = dlc.Download(context.Background(), vidInfo, dstFormat, f)
+		err = dlc.Download(ctx, vidInfo, dstFormat, f)
 		if err != nil {
 			return err
 		}

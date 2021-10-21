@@ -14,12 +14,19 @@ go mod vendor
 # ref: https://github.com/golang/go/issues/26366
 #
 # install specific verion of josephcopenhaver/gopus with cgo files
+JOSEPHCOPENHAVER_GOPUS_GIT_SHA=17c317f9c9e9545df42c4ffc0bb9252ee6261868
 (
+    set -eo pipefail
+
+    # note this currently reruns each time because go mod vendor blows away the .git dir and other files
+
     pushd vendor/github.com/josephcopenhaver
-    rm -rf gopus
-    git clone https://github.com/josephcopenhaver/gopus.git
-    cd gopus
-    git reset --hard 17c317f9c9e9545df42c4ffc0bb9252ee6261868
+    if [ ! -d gopus ] || [ ! -d gopus/.git ] || [[ "$(cd gopus && git log -1 --format=%H)" != "$JOSEPHCOPENHAVER_GOPUS_GIT_SHA" ]]; then
+        rm -rf gopus
+        git clone https://github.com/josephcopenhaver/gopus.git
+        cd gopus
+        git reset --hard "$JOSEPHCOPENHAVER_GOPUS_GIT_SHA"
+    fi
 )
 
 # TODO: statically compile or have release image use the shell as a base image

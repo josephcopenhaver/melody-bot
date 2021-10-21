@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"regexp"
 	"strings"
 
@@ -12,10 +13,10 @@ type HandleMessageCreate struct {
 	Name        string
 	Usage       string
 	Description string
-	Matcher     func(*service.Player, string) func(*discordgo.Session, *discordgo.MessageCreate, *service.Player) error
+	Matcher     func(*service.Player, string) func(context.Context, *discordgo.Session, *discordgo.MessageCreate, *service.Player) error
 }
 
-func newHandleMessageCreate(name, usage, description string, matcher func(*service.Player, string) func(*discordgo.Session, *discordgo.MessageCreate, *service.Player) error) HandleMessageCreate {
+func newHandleMessageCreate(name, usage, description string, matcher func(*service.Player, string) func(context.Context, *discordgo.Session, *discordgo.MessageCreate, *service.Player) error) HandleMessageCreate {
 	return HandleMessageCreate{
 		Name:        name,
 		Usage:       usage,
@@ -24,8 +25,8 @@ func newHandleMessageCreate(name, usage, description string, matcher func(*servi
 	}
 }
 
-func newWordMatcher(requirePlayer bool, words []string, handler func(*discordgo.Session, *discordgo.MessageCreate, *service.Player, map[string]string) error) func(*service.Player, string) func(*discordgo.Session, *discordgo.MessageCreate, *service.Player) error {
-	return func(p *service.Player, s string) func(*discordgo.Session, *discordgo.MessageCreate, *service.Player) error {
+func newWordMatcher(requirePlayer bool, words []string, handler func(context.Context, *discordgo.Session, *discordgo.MessageCreate, *service.Player, map[string]string) error) func(*service.Player, string) func(context.Context, *discordgo.Session, *discordgo.MessageCreate, *service.Player) error {
+	return func(p *service.Player, s string) func(context.Context, *discordgo.Session, *discordgo.MessageCreate, *service.Player) error {
 
 		if p == nil && requirePlayer {
 			return nil
@@ -34,8 +35,8 @@ func newWordMatcher(requirePlayer bool, words []string, handler func(*discordgo.
 		s = strings.TrimSpace(s)
 		for _, w := range words {
 			if w == s {
-				return func(s *discordgo.Session, m *discordgo.MessageCreate, p *service.Player) error {
-					return handler(s, m, p, nil)
+				return func(ctx context.Context, s *discordgo.Session, m *discordgo.MessageCreate, p *service.Player) error {
+					return handler(ctx, s, m, p, nil)
 				}
 			}
 		}
@@ -44,8 +45,8 @@ func newWordMatcher(requirePlayer bool, words []string, handler func(*discordgo.
 	}
 }
 
-func newRegexMatcher(requirePlayer bool, re *regexp.Regexp, handler func(*discordgo.Session, *discordgo.MessageCreate, *service.Player, map[string]string) error) func(*service.Player, string) func(*discordgo.Session, *discordgo.MessageCreate, *service.Player) error {
-	return func(p *service.Player, s string) func(*discordgo.Session, *discordgo.MessageCreate, *service.Player) error {
+func newRegexMatcher(requirePlayer bool, re *regexp.Regexp, handler func(context.Context, *discordgo.Session, *discordgo.MessageCreate, *service.Player, map[string]string) error) func(*service.Player, string) func(context.Context, *discordgo.Session, *discordgo.MessageCreate, *service.Player) error {
+	return func(p *service.Player, s string) func(context.Context, *discordgo.Session, *discordgo.MessageCreate, *service.Player) error {
 
 		if p == nil && requirePlayer {
 			return nil
@@ -56,8 +57,8 @@ func newRegexMatcher(requirePlayer bool, re *regexp.Regexp, handler func(*discor
 			return nil
 		}
 
-		return func(s *discordgo.Session, m *discordgo.MessageCreate, p *service.Player) error {
-			return handler(s, m, p, args)
+		return func(ctx context.Context, s *discordgo.Session, m *discordgo.MessageCreate, p *service.Player) error {
+			return handler(ctx, s, m, p, args)
 		}
 	}
 }

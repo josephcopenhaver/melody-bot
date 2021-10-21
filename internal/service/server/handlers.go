@@ -51,6 +51,10 @@ func (s *Server) Handlers() error {
 		// https://discord.com/developers/docs/topics/gateway#voice-state-update
 		// Sent when someone joins/leaves/moves voice channels. Inner payload is a voice state object.
 
+		if s.ctx.Err() != nil {
+			return
+		}
+
 		log.Debug().
 			Msg("evt: join/leave/move voice channel")
 
@@ -64,7 +68,7 @@ func (s *Server) Handlers() error {
 			return
 		}
 
-		p := s.Brain.Player(session, evt.VoiceState.GuildID)
+		p := s.Brain.Player(s.ctx, &s.wg, session, evt.VoiceState.GuildID)
 		if p.HasAudience() {
 			return
 		}
@@ -79,6 +83,10 @@ func (s *Server) Handlers() error {
 		// https://discord.com/developers/docs/topics/gateway#guild-delete
 		// Sent when a guild becomes unavailable during a guild outage, or when the user leaves or is removed from a guild. The inner payload is an unavailable guild object. If the unavailable field is not set, the user was removed from the guild.
 
+		if s.ctx.Err() != nil {
+			return
+		}
+
 		log.Debug().
 			Msg("evt: guild unavailable")
 
@@ -91,7 +99,7 @@ func (s *Server) Handlers() error {
 			return
 		}
 
-		p := s.Brain.Player(session, evt.ID)
+		p := s.Brain.Player(s.ctx, &s.wg, session, evt.ID)
 
 		channelId := p.GetVoiceChannelId()
 		if channelId == "" {
@@ -107,6 +115,10 @@ func (s *Server) Handlers() error {
 		// https://discord.com/developers/docs/topics/gateway#channel-delete
 		// Sent when a channel relevant to the current user is deleted. The inner payload is a channel object.
 
+		if s.ctx.Err() != nil {
+			return
+		}
+
 		log.Debug().
 			Msg("evt: channel deleted")
 
@@ -119,7 +131,7 @@ func (s *Server) Handlers() error {
 			return
 		}
 
-		p := s.Brain.Player(session, evt.Channel.GuildID)
+		p := s.Brain.Player(s.ctx, &s.wg, session, evt.Channel.GuildID)
 
 		channelId := p.GetVoiceChannelId()
 		if channelId == "" {
@@ -150,11 +162,15 @@ func (srv *Server) addMuxHandlers() {
 			return
 		}
 
+		if srv.ctx.Err() != nil {
+			return
+		}
+
 		trimMsg := strings.TrimSpace(m.Message.Content)
 
 		if m.GuildID != "" {
 
-			p = srv.Brain.Player(s, m.GuildID)
+			p = srv.Brain.Player(srv.ctx, &srv.wg, s, m.GuildID)
 
 			// verify the user is giving me a direct command in a guild channel
 			// if so then run handlers
@@ -258,7 +274,7 @@ func (srv *Server) addMuxHandlers() {
 				continue
 			}
 
-			err := handler(s, m, p)
+			err := handler(srv.ctx, s, m, p)
 			if err != nil {
 				log.Err(err).
 					Str("handler_name", h.Name).

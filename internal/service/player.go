@@ -1,6 +1,8 @@
 package service
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -28,6 +30,7 @@ const (
 	SignalNext
 	SignalPrevious
 	SignalRestartTrack
+	SignalDispose
 	//
 	SignalUnusedUpper
 )
@@ -43,6 +46,7 @@ func (s Signal) String() string {
 		"next",
 		"previous",
 		"restart-track",
+		"dispose",
 	}[int(s)]
 }
 
@@ -232,6 +236,7 @@ type PlayerStateMachine struct {
 }
 
 type Player struct {
+	ctx            context.Context
 	mutex          sync.RWMutex
 	memory         atomic.Value
 	discordSession *discordgo.Session
@@ -241,9 +246,10 @@ type Player struct {
 	signalChan   chan TracedSignal
 }
 
-func NewPlayer(s *discordgo.Session, guildId string) *Player {
+func NewPlayer(ctx context.Context, wg *sync.WaitGroup, s *discordgo.Session, guildId string) *Player {
 
 	p := &Player{
+		ctx:            ctx,
 		discordSession: s,
 		discordGuildId: guildId,
 		signalChan:     make(chan TracedSignal, 1),
@@ -259,7 +265,9 @@ func NewPlayer(s *discordgo.Session, guildId string) *Player {
 		playRequests:    playRequests,
 		currentTrackIdx: -1,
 	})
-	go p.playerGoroutine()
+
+	wg.Add(1)
+	go p.playerGoroutine(wg)
 
 	return p
 }
@@ -636,15 +644,25 @@ func (p *Player) setNiceness(n int) error {
 	return nil
 }
 
-func (p *Player) playerGoroutine() {
+func (p *Player) playerGoroutine(wg *sync.WaitGroup) {
+	defer wg.Done()
 
 	defer func() {
-		p.debug().Msg("player: permanently broken")
+		if p.ctx.Err() == nil {
+			p.debug().Msg("player: permanently broken") // should never happen
+		}
 	}()
 
 	p.debug().Msg("player: starting")
 
-	for {
+	doneChan := p.ctx.Done()
+	go func() {
+		<-doneChan
+		p.signalChan <- TracedSignal{nil, SignalDispose}
+	}()
+
+	var done bool
+	for !done {
 		func() {
 			defer func() {
 				if r := recover(); r != nil {
@@ -657,11 +675,17 @@ func (p *Player) playerGoroutine() {
 			}()
 			err := p.playerStateMachine()
 			if err != nil {
-				log.Err(err).Msg("player: error occured during playback")
+				if err == ErrDisposed {
+					done = true
+					return
+				}
+				log.Err(err).Msg("player: error occurred during playback")
 			}
 		}()
 	}
 }
+
+var ErrDisposed = errors.New("player disposed")
 
 func (p *Player) playerStateMachine() error {
 	var err error
@@ -681,6 +705,8 @@ func (p *Player) playerStateMachine() error {
 		p.debug().Msg("player: got signal before playing track")
 
 		switch s.sig {
+		case SignalDispose:
+			return ErrDisposed
 		case SignalNewVoiceConnection:
 			sendChan = nil
 		case SignalPlay:
@@ -713,6 +739,8 @@ func (p *Player) playerStateMachine() error {
 		p.debug().Msg("player: got signal before playing track")
 
 		switch s.sig {
+		case SignalDispose:
+			return ErrDisposed
 		case SignalNewVoiceConnection:
 			sendChan = nil
 		case SignalReset:
@@ -814,6 +842,8 @@ func (p *Player) playerStateMachine() error {
 		// signals recognized when in playing state
 		case s := <-p.signalChan:
 			switch s.sig {
+			case SignalDispose:
+				return ErrDisposed
 			case SignalNewVoiceConnection:
 				sendChan = p.sendChannel()
 				if sendChan == nil {
@@ -854,6 +884,8 @@ func (p *Player) playerStateMachine() error {
 					// signals recognized when in paused state
 					s := <-p.signalChan
 					switch s.sig {
+					case SignalDispose:
+						return ErrDisposed
 					case SignalNewVoiceConnection:
 						sendChan = nil
 					case SignalPlay:

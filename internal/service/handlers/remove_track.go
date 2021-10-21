@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"regexp"
 
 	"github.com/bwmarrin/discordgo"
@@ -16,7 +17,7 @@ func RemoveTrack() HandleMessageCreate {
 		newRegexMatcher(
 			true,
 			regexp.MustCompile(`^\s*remove\s+(?P<track_url>[^\s]+.*?)\s*$`),
-			func(s *discordgo.Session, m *discordgo.MessageCreate, p *service.Player, args map[string]string) error {
+			func(_ context.Context, s *discordgo.Session, m *discordgo.MessageCreate, p *service.Player, args map[string]string) error {
 
 				url := args["track_url"]
 
