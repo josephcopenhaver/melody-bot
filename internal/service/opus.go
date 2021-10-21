@@ -11,7 +11,7 @@ import (
 
 // transcoding constants
 const (
-	SampleRate       = 48000 // kits per second
+	SampleRate       = 48000 // bits per second
 	NumChannels      = 1
 	SampleSize       = 960 // int16 size of each audio frame
 	SampleMaxBytes   = SampleSize * 2 * NumChannels
