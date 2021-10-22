@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/ioutil"
 	"net/http"
 	"os"
 	"os/exec"
@@ -43,7 +44,8 @@ func Play() HandleMessageCreate {
 }
 
 type audioStream struct {
-	size int64
+	srcVideoUrlStr string
+	size           int64
 	*youtube.Video
 	*youtube.Format
 	httpClient  *http.Client
@@ -169,8 +171,33 @@ func (as *audioStream) ReadCloser(ctx context.Context, wg *sync.WaitGroup) (io.R
 			return
 		}
 
-		// TODO: instead use a truly temporary file without collision possibilities
-		tmpFilePath := as.dstFilePath + ".tmp"
+		tmpF, err := ioutil.TempFile("", "melody-bot.*.audio.discord-opus.tmp")
+		if err != nil {
+			setErr(err)
+			return
+		}
+
+		tmpFilePath := tmpF.Name()
+
+		ignoredErr := tmpF.Close()
+		_ = ignoredErr
+
+		tmpFilePathCleanup := func() {
+			os.Remove(tmpFilePath)
+		}
+		defer func() {
+			if tmpFilePathCleanup == nil {
+				return
+			}
+
+			log.Debug().
+				Err(getErr()).
+				Str("src_url", as.srcVideoUrlStr).
+				Str("dst_path", as.dstFilePath).
+				Msg("could not cache audio stream")
+
+			tmpFilePathCleanup()
+		}()
 
 		escape := func(s string) string {
 			return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
@@ -202,6 +229,14 @@ func (as *audioStream) ReadCloser(ctx context.Context, wg *sync.WaitGroup) (io.R
 				Msg("failed to rename file")
 			return
 		}
+
+		// tmp file is now gone, don't try to remove it
+		tmpFilePathCleanup = nil
+
+		log.Debug().
+			Str("src_url", as.srcVideoUrlStr).
+			Str("dst_path", as.dstFilePath).
+			Msg("cached audio stream")
 	}()
 
 	result.read = func(b []byte) (int, error) {
@@ -211,7 +246,7 @@ func (as *audioStream) ReadCloser(ctx context.Context, wg *sync.WaitGroup) (io.R
 
 		i, err := pr.Read(b)
 		if errors.Is(err, io.EOF) {
-			// wait for the temp tee file to get renamed
+			// wait for the temp file to get cached
 			<-successWaitCtx.Done()
 		}
 
@@ -261,9 +296,10 @@ func playAfterTranscode(ctx context.Context, s *discordgo.Session, m *discordgo.
 	}
 
 	as := &audioStream{
-		Video:       ytVid,
-		httpClient:  &audioStreamHttpClient,
-		dstFilePath: cachedRef,
+		srcVideoUrlStr: urlStr,
+		Video:          ytVid,
+		httpClient:     &audioStreamHttpClient,
+		dstFilePath:    cachedRef,
 	}
 
 	// TODO: consider moving format selection logic into audioStream
