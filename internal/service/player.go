@@ -78,13 +78,13 @@ func (s State) String() string {
 
 type AudioStreamer interface {
 	ReadCloser(context.Context, *sync.WaitGroup) (io.ReadCloser, error)
+	SrcUrlStr() string
 	Cached() bool
 }
 
 type Track struct {
 	// public
 	AudioStreamer
-	Url           string
 	AuthorId      string
 	AuthorMention string
 }
@@ -126,7 +126,7 @@ func (m *PlayerMemory) reset() {
 func (m *PlayerMemory) indexOfTrack(url string) int {
 
 	for i, t := range m.tracks {
-		if t.Url == url {
+		if t.SrcUrlStr() == url {
 			return i
 		}
 	}
@@ -149,19 +149,19 @@ func (m *PlayerMemory) play(s State) {
 		m.tracks = []Track{t}
 		m.currentTrackIdx = -1
 	case StateIdle:
-		i := m.indexOfTrack(t.Url)
+		i := m.indexOfTrack(t.SrcUrlStr())
 		if i == -1 {
 			m.tracks = append(m.tracks, t)
 			m.currentTrackIdx = len(m.tracks) - 2
 		}
 		// TODO: else if already in track list, then consider moving track to end or moving the currentTrackIdx
 	case StatePaused:
-		i := m.indexOfTrack(t.Url)
+		i := m.indexOfTrack(t.SrcUrlStr())
 		if i == -1 {
 			m.tracks = append(m.tracks, t)
 		}
 	case StatePlaying:
-		i := m.indexOfTrack(t.Url)
+		i := m.indexOfTrack(t.SrcUrlStr())
 		if i == -1 {
 			m.tracks = append(m.tracks, t)
 		}
@@ -395,13 +395,12 @@ func (p *Player) CycleRepeatMode(srcEvt interface{}) string {
 	return result
 }
 
-func (p *Player) Play(srcEvt interface{}, url string, authorId, authorMention string, as AudioStreamer) {
+func (p *Player) Play(srcEvt interface{}, authorId, authorMention string, as AudioStreamer) {
 	p.withMemory(func(m *PlayerMemory) {
 
 		m.playRequests <- &playRequest{
 			track: &Track{
 				AudioStreamer: as,
-				Url:           url,
 				AuthorId:      authorId,
 				AuthorMention: authorMention,
 			},
@@ -799,7 +798,7 @@ func (p *Player) playerStateMachine() error {
 		return nil
 	} else {
 
-		msg := "now playing: " + track.Url
+		msg := "now playing: " + track.SrcUrlStr()
 		if track.AuthorMention != "" {
 			msg += " ( added by " + track.AuthorMention + " )"
 		}
@@ -814,7 +813,7 @@ func (p *Player) playerStateMachine() error {
 
 	f, err := track.ReadCloser(p.ctx, p.wg)
 	if err != nil {
-		return fmt.Errorf("failed to open audio stream: %s, %t: %v", track.Url, track.Cached(), err)
+		return fmt.Errorf("failed to open audio stream: %s, %t: %v", track.SrcUrlStr(), track.Cached(), err)
 	}
 	defer f.Close()
 
@@ -943,7 +942,7 @@ func (p *Player) playerStateMachine() error {
 			if err == io.EOF {
 				return nil
 			}
-			return fmt.Errorf("error reading track: %s: %v", track.Url, err)
+			return fmt.Errorf("error reading track: %s: %v", track.SrcUrlStr(), err)
 		}
 
 		if numBytes == 0 {

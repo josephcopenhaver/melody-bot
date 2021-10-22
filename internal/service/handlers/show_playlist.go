@@ -29,7 +29,7 @@ func ShowPlaylist() HandleMessageCreate {
 				msg := "---\n#\n# playlist:\n#\n"
 
 				for i, t := range playlist.Tracks {
-					msg += "\n- url: `" + t.Url + "`\n" +
+					msg += "\n- url: `" + t.SrcUrlStr() + "`\n" +
 						"  from: " + t.AuthorMention + "\n"
 					if i == playlist.CurrentTrackIdx {
 						msg += "  state: playing\n"

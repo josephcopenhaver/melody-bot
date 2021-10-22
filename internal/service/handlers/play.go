@@ -82,6 +82,10 @@ func (rc *readCloser) Close() error {
 	return rc.close()
 }
 
+func (as *audioStream) SrcUrlStr() string {
+	return as.srcVideoUrlStr
+}
+
 func (as *audioStream) Cached() bool {
 
 	_, err := os.Stat(as.dstFilePath)
@@ -358,7 +362,7 @@ func playAfterTranscode(ctx context.Context, s *discordgo.Session, m *discordgo.
 		Int("AudioChannels", as.AudioChannels).
 		Msg("found video format")
 
-	play(p, m, urlStr, as)
+	play(p, m, as)
 
 	return nil
 }
@@ -405,7 +409,7 @@ func findVoiceChannel(s *discordgo.Session, m *discordgo.MessageCreate, p *servi
 
 // play can be called multiple times
 // when the cacheDir is not empty then the file will be playable
-func play(p *service.Player, m *discordgo.MessageCreate, url string, ad service.AudioStreamer) {
+func play(p *service.Player, m *discordgo.MessageCreate, as service.AudioStreamer) {
 
-	p.Play(m, url, m.Message.Author.ID, m.Author.Mention(), ad)
+	p.Play(m, m.Message.Author.ID, m.Author.Mention(), as)
 }
