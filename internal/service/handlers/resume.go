@@ -11,11 +11,11 @@ func Resume() HandleMessageCreate {
 
 	return newHandleMessageCreate(
 		"resume",
-		"<resume|play>",
+		"<resume|unpause|play>",
 		"if stopped or paused, resumes playback",
 		newWordMatcher(
 			true,
-			[]string{"resume", "play"},
+			[]string{"resume", "unpause", "play"},
 			func(_ context.Context, s *discordgo.Session, m *discordgo.MessageCreate, p *service.Player, _ map[string]string) error {
 
 				p.Resume(m)

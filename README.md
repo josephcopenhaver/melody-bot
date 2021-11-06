@@ -109,7 +109,7 @@ restart-track:
   description: if playback is in the middle of a track, rewind to the start of the track
 
 resume:
-  usage: <resume|play>
+  usage: <resume|unpause|play>
   description: if stopped or paused, resumes playback
 
 set-text-channel:

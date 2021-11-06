@@ -24,7 +24,7 @@ import (
 )
 
 const (
-	AudioFileName = "audio.discord-opus"
+	AudioFileName = "audio.s16le"
 )
 
 // TODO: handle voice channel reconnects forced by the server, specifically when forced into a channel where no one is present
@@ -135,15 +135,38 @@ func (as *audioStream) ReadCloser(ctx context.Context, wg *sync.WaitGroup) (io.R
 		return errResp.err
 	}
 
-	successWaitCtx, successWaitCancel := context.WithCancel(context.Background())
-	defer successWaitCancel()
+	tmpF, err := ioutil.TempFile("", "melody-bot.*.audio.s16le.tmp")
+	if err != nil {
+		return nil, err
+	}
+
+	tmpFilePath := tmpF.Name()
+
+	ignoredErr := tmpF.Close()
+	_ = ignoredErr
+
+	tmpFilePathCleanup := func() {
+		os.Remove(tmpFilePath)
+	}
 
 	pr, pw := io.Pipe()
 	ctx, cancel := context.WithCancel(ctx)
 	result := readCloser{
 		close: func() error {
-			defer successWaitCancel()
 			defer cancel()
+			defer func() {
+				if tmpFilePathCleanup == nil {
+					return
+				}
+
+				log.Debug().
+					Err(getErr()).
+					Str("src_url", as.srcVideoUrlStr).
+					Str("dst_path", as.dstFilePath).
+					Msg("could not cache audio stream")
+
+				tmpFilePathCleanup()
+			}()
 			pr.Close()
 			return nil
 		},
@@ -151,12 +174,9 @@ func (as *audioStream) ReadCloser(ctx context.Context, wg *sync.WaitGroup) (io.R
 
 	wg.Add(1)
 	go func() {
-		defer successWaitCancel()
 		defer wg.Done()
 
 		defer pw.Close()
-
-		bw := bufio.NewWriter(pw)
 
 		var dlc youtube.Client
 		dlc.HTTPClient = as.httpClient
@@ -175,41 +195,15 @@ func (as *audioStream) ReadCloser(ctx context.Context, wg *sync.WaitGroup) (io.R
 			return
 		}
 
-		tmpF, err := ioutil.TempFile("", "melody-bot.*.audio.discord-opus.tmp")
-		if err != nil {
-			setErr(err)
-			return
-		}
-
-		tmpFilePath := tmpF.Name()
-
-		ignoredErr := tmpF.Close()
-		_ = ignoredErr
-
-		tmpFilePathCleanup := func() {
-			os.Remove(tmpFilePath)
-		}
-		defer func() {
-			if tmpFilePathCleanup == nil {
-				return
-			}
-
-			log.Debug().
-				Err(getErr()).
-				Str("src_url", as.srcVideoUrlStr).
-				Str("dst_path", as.dstFilePath).
-				Msg("could not cache audio stream")
-
-			tmpFilePathCleanup()
-		}()
-
 		escape := func(s string) string {
 			return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
 		}
 
-		cmd := exec.CommandContext(ctx, "nice", "bash", "-c", "set -eo pipefail && ffmpeg -f mp4 -y -loglevel quiet -i pipe: -ar 48000 -ac 1 -vn -f s16le pipe:1 | /workspace/build/bin/convert-to-discord-opus | tee "+escape(tmpFilePath))
+		cmd := exec.CommandContext(ctx, "bash", "-c", "set -eo pipefail && ffmpeg -f mp4 -y -loglevel quiet -i pipe: -ar 48000 -ac 1 -vn -f s16le pipe:1 | tee "+escape(tmpFilePath))
 		cmd.Stdin = cr
+		bw := bufio.NewWriter(pw)
 		cmd.Stdout = bw
+		defer bw.Flush()
 
 		if err := cmd.Run(); err != nil {
 			setErr(fmt.Errorf("stream conversion process failed: %w", err))
@@ -217,30 +211,18 @@ func (as *audioStream) ReadCloser(ctx context.Context, wg *sync.WaitGroup) (io.R
 		}
 
 		if cr.bytesRead != as.size {
-			setErr(errors.New("unexpected end of stream"))
-			return
-		}
+			err := errors.New("unexpected end of stream during download")
 
-		if err := bw.Flush(); err != nil && !errors.Is(err, io.EOF) {
-			setErr(fmt.Errorf("failed to flush file conversion stream: %w", err))
-			return
-		}
-
-		if err := os.Rename(tmpFilePath, as.dstFilePath); err != nil {
 			log.Err(err).
-				Str("src", tmpFilePath).
-				Str("dst", as.dstFilePath).
-				Msg("failed to rename file")
+				Str("src_url", as.srcVideoUrlStr).
+				Str("dst_path", as.dstFilePath).
+				Int64("bytes_read", cr.bytesRead).
+				Int64("size", as.size).
+				Msg("error")
+
+			setErr(err)
 			return
 		}
-
-		// tmp file is now gone, don't try to remove it
-		tmpFilePathCleanup = nil
-
-		log.Debug().
-			Str("src_url", as.srcVideoUrlStr).
-			Str("dst_path", as.dstFilePath).
-			Msg("cached audio stream")
 	}()
 
 	result.read = func(b []byte) (int, error) {
@@ -250,8 +232,20 @@ func (as *audioStream) ReadCloser(ctx context.Context, wg *sync.WaitGroup) (io.R
 
 		i, err := pr.Read(b)
 		if errors.Is(err, io.EOF) {
-			// wait for the temp file to get cached
-			<-successWaitCtx.Done()
+			if err := os.Rename(tmpFilePath, as.dstFilePath); err != nil {
+				log.Err(err).
+					Str("src", tmpFilePath).
+					Str("dst", as.dstFilePath).
+					Msg("failed to rename file")
+			}
+
+			// tmp file is now gone, don't try to remove it
+			tmpFilePathCleanup = nil
+
+			log.Debug().
+				Str("src_url", as.srcVideoUrlStr).
+				Str("dst_path", as.dstFilePath).
+				Msg("cached audio stream")
 		}
 
 		return i, err
@@ -293,7 +287,7 @@ func playAfterTranscode(ctx context.Context, s *discordgo.Session, m *discordgo.
 	}
 
 	cacheDir := path.Join(".media-cache", "v1", ytVid.ID)
-	cachedRef := path.Join(cacheDir, "audio.discord-opus")
+	cachedRef := path.Join(cacheDir, "audio.s16le")
 
 	if err := os.MkdirAll(cacheDir, os.ModePerm); err != nil {
 		return fmt.Errorf("failed to make cache directory: %s: %v", cacheDir, err)
@@ -305,11 +299,6 @@ func playAfterTranscode(ctx context.Context, s *discordgo.Session, m *discordgo.
 		httpClient:     &audioStreamHttpClient,
 		dstFilePath:    cachedRef,
 	}
-
-	// TODO: consider moving format selection logic into audioStream
-	// if as.Cached() {
-	// 	play(p, m, urlStr, as)
-	// }
 
 	formats := ytVid.Formats.Type("video/mp4")
 	formats.Sort()
@@ -379,12 +368,12 @@ func findVoiceChannel(s *discordgo.Session, m *discordgo.MessageCreate, p *servi
 		return result, nil
 	}
 
-	// find current voice channel of message sender and join it
-
-	g, err := s.Guild(m.GuildID)
+	g, err := s.State.Guild(m.GuildID)
 	if err != nil {
-		return nil, err
+		return result, err
 	}
+
+	// find current voice channel of message sender and join it
 
 	for _, v := range g.VoiceStates {
 		if v.UserID != m.Author.ID {
@@ -394,7 +383,7 @@ func findVoiceChannel(s *discordgo.Session, m *discordgo.MessageCreate, p *servi
 		mute := false
 		deaf := false
 
-		result, err = s.ChannelVoiceJoin(m.GuildID, v.ChannelID, mute, deaf)
+		result, err := s.ChannelVoiceJoin(m.GuildID, v.ChannelID, mute, deaf)
 		if err != nil {
 			return nil, err
 		}

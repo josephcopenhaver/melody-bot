@@ -1,13 +1,16 @@
 package service
 
 import (
+	"bufio"
 	"context"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
 	"sync"
 	"sync/atomic"
 
+	"github.com/josephcopenhaver/gopus"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 
@@ -174,8 +177,8 @@ func (m *PlayerMemory) hasAudience(s *discordgo.Session, guildId string) bool {
 		return false
 	}
 
-	g, err := s.Guild(guildId)
-	if err != nil {
+	g, err := s.State.Guild(guildId)
+	if err != nil || g == nil {
 		log.Err(err).Msg("player: hasAudience: failed to get guild voice states")
 		return false
 	}
@@ -695,7 +698,7 @@ func (p *Player) playerStateMachine() error {
 
 		p.setDefaultTextChannel(s.src)
 
-		p.debug().Msg("player: got signal before playing track")
+		p.debug().Msg("state=default, player: got signal before playing track")
 
 		switch s.sig {
 		case SignalDispose:
@@ -729,7 +732,7 @@ func (p *Player) playerStateMachine() error {
 		// signals recognized when in idle state ( stopped or partially errored )
 		s := <-p.signalChan
 
-		p.debug().Msg("player: got signal before playing track")
+		p.debug().Msg("state=idle, player: got signal before playing track")
 
 		switch s.sig {
 		case SignalDispose:
@@ -817,11 +820,18 @@ func (p *Player) playerStateMachine() error {
 	}
 	defer f.Close()
 
+	//
 	// read packets from file and buffer them to send to broadcast channel
+	//
 
-	opusReader := NewOpusReader(f)
-	outPackets := [NumPacketBuffers][SampleMaxBytes]byte{}
-	outPacketIdx := 0
+	br := bufio.NewReaderSize(f, SampleMaxBytes)
+
+	opusEncoder, err := gopus.NewEncoder(SampleRate, NumChannels, gopus.Audio)
+	if err != nil {
+		return err
+	}
+
+	pcmBuf := make([]int16, SampleSize)
 
 	for {
 
@@ -937,23 +947,30 @@ func (p *Player) playerStateMachine() error {
 			p.debug().Msg("player: processed signal while playing")
 		}
 
-		numBytes, err := opusReader.ReadPacket(outPackets[outPacketIdx][:])
+		// TODO: modify discordgo to support a packet pool
+		packet := make([]byte, SampleMaxBytes)
+
+		err = binary.Read(br, binary.LittleEndian, &pcmBuf)
 		if err != nil {
-			if err == io.EOF {
+			if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+				log.Debug().Err(err).Msg("end of track or broken pipe")
 				return nil
 			}
 			return fmt.Errorf("error reading track: %s: %v", track.SrcUrlStr(), err)
 		}
 
+		numBytes, err := opusEncoder.Encode(pcmBuf, SampleSize, packet)
+		if err != nil {
+			return fmt.Errorf("error encoding track to opus: %s: %v", track.SrcUrlStr(), err)
+		}
+
 		if numBytes == 0 {
+			log.Debug().Msg("opus encode created zero bytes")
 			return nil
 		}
 
-		sendChan <- outPackets[outPacketIdx][:numBytes]
+		// TODO: modify discordgo to support a packet pool
 
-		outPacketIdx++
-		if outPacketIdx >= NumPacketBuffers {
-			outPacketIdx = 0
-		}
+		sendChan <- packet[:numBytes]
 	}
 }
