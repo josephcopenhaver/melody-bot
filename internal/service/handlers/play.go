@@ -105,8 +105,15 @@ func (as *audioStream) Cached() bool {
 func (as *audioStream) ReadCloser(ctx context.Context, wg *sync.WaitGroup) (io.ReadCloser, error) {
 
 	if as.Cached() {
+		log.Debug().
+			Str("url", as.srcVideoUrlStr).
+			Msg("playing from cache")
 		return os.Open(as.dstFilePath)
 	}
+
+	log.Debug().
+		Str("url", as.srcVideoUrlStr).
+		Msg("transcoding just in time and playing from transcode activity")
 
 	var errResp struct {
 		sync.RWMutex
@@ -175,6 +182,7 @@ func (as *audioStream) ReadCloser(ctx context.Context, wg *sync.WaitGroup) (io.R
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
+		defer cancel()
 
 		defer pw.Close()
 
@@ -231,24 +239,38 @@ func (as *audioStream) ReadCloser(ctx context.Context, wg *sync.WaitGroup) (io.R
 		}
 
 		i, err := pr.Read(b)
-		if errors.Is(err, io.EOF) {
-			if err := os.Rename(tmpFilePath, as.dstFilePath); err != nil {
-				log.Err(err).
-					Str("src", tmpFilePath).
-					Str("dst", as.dstFilePath).
-					Msg("failed to rename file")
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+
+				// fully wait for writer to return
+				<-ctx.Done()
+
+				if err := os.Rename(tmpFilePath, as.dstFilePath); err != nil {
+					log.Err(err).
+						Str("src", tmpFilePath).
+						Str("dst", as.dstFilePath).
+						Msg("failed to rename file")
+
+					return i, err
+				}
+
+				// tmp file is now gone, don't try to remove it
+				tmpFilePathCleanup = nil
+
+				log.Debug().
+					Str("src_url", as.srcVideoUrlStr).
+					Str("dst_path", as.dstFilePath).
+					Msg("cached audio stream")
+
+				return i, err
+			} else {
+				cancel()
 			}
 
-			// tmp file is now gone, don't try to remove it
-			tmpFilePathCleanup = nil
-
-			log.Debug().
-				Str("src_url", as.srcVideoUrlStr).
-				Str("dst_path", as.dstFilePath).
-				Msg("cached audio stream")
+			return i, err
 		}
 
-		return i, err
+		return i, nil
 	}
 
 	return &result, nil
