@@ -1,164 +1,33 @@
 package handlers
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"fmt"
+	"io"
+	"io/ioutil"
 	"net/http"
 	"os"
 	"os/exec"
 	"path"
 	"regexp"
-	"strconv"
 	"strings"
 	"sync"
-	"sync/atomic"
 
 	"github.com/rs/zerolog/log"
 
 	"github.com/bwmarrin/discordgo"
-	"github.com/rylio/ytdl"
+	"github.com/kkdai/youtube/v2"
 
 	"github.com/josephcopenhaver/melody-bot/internal/service"
 )
 
 const (
-	AudioFileName = "audio.discord-opus"
+	AudioFileName = "audio.s16le"
 )
 
 // TODO: handle voice channel reconnects forced by the server, specifically when forced into a channel where no one is present
-
-// TODO: download raw video to tmp subfolder
-
-type playWorkPermit struct {
-	mutex            sync.Mutex
-	acquired         bool
-	responseRecorded int32
-	onPass           func()
-	onFail           func()
-}
-
-func (w *playWorkPermit) Acquired() bool {
-	return w.acquired
-}
-
-func (w *playWorkPermit) Done() error {
-	if !w.acquired {
-		return nil
-	}
-
-	w.mutex.Lock()
-	defer w.mutex.Unlock()
-
-	if atomic.LoadInt32(&w.responseRecorded) != 0 {
-		return nil
-	}
-	atomic.StoreInt32(&w.responseRecorded, 1)
-
-	w.onPass()
-
-	return nil
-}
-
-func (w *playWorkPermit) Fail() {
-	if !w.acquired {
-		return
-	}
-
-	w.mutex.Lock()
-	defer w.mutex.Unlock()
-
-	if atomic.LoadInt32(&w.responseRecorded) != 0 {
-		return
-	}
-	atomic.StoreInt32(&w.responseRecorded, 1)
-
-	w.onFail()
-}
-
-// playAcquireWorkPermit
-// fetch a work permit for a given work id
-//
-// the worker can defer to a verifyJobDone function to force the acquisition of a permit
-// if the job is indeed not done ( when verifyJobDone returns false )
-var playAcquireWorkPermit = func() func(string, func() (bool, error)) (*playWorkPermit, error) {
-
-	mutex := &sync.Mutex{}
-	workRegistry := &sync.Map{}
-
-	onPass := func(key string) func() {
-		return func() {
-			mutex.Lock()
-			defer mutex.Unlock()
-
-			workRegistry.Store(key, int8(0))
-		}
-	}
-
-	onFail := func(key string) func() {
-		return func() {
-			mutex.Lock()
-			defer mutex.Unlock()
-
-			workRegistry.Store(key, int8(1))
-		}
-	}
-
-	return func(id string, verifyJobDone func() (bool, error)) (*playWorkPermit, error) {
-		mutex.Lock()
-		defer mutex.Unlock()
-
-		v, ok := workRegistry.Load(id)
-		if ok {
-			status, _ := v.(int8)
-
-			if status == -1 {
-				// in progress
-				return &playWorkPermit{
-					responseRecorded: 1,
-				}, nil
-			} else if status == 1 {
-				// failed
-				return &playWorkPermit{
-					acquired: true,
-					onPass:   onPass(id),
-					onFail:   onFail(id),
-				}, nil
-			} else if status == 0 {
-				// completed
-
-				verifiedComplete, err := verifyJobDone()
-				if err != nil {
-					return nil, err
-				}
-
-				if !verifiedComplete {
-					workRegistry.Store(id, int8(-1))
-					return &playWorkPermit{
-						acquired: true,
-						onPass:   onPass(id),
-						onFail:   onFail(id),
-					}, nil
-				} else {
-					return &playWorkPermit{
-						acquired:         true,
-						responseRecorded: 1,
-					}, nil
-				}
-			}
-
-			return nil, nil
-		}
-
-		workRegistry.Store(id, int8(-1))
-
-		return &playWorkPermit{
-			acquired: true,
-			onPass:   onPass(id),
-			onFail:   onFail(id),
-		}, nil
-	}
-}()
 
 func Play() HandleMessageCreate {
 
@@ -174,7 +43,270 @@ func Play() HandleMessageCreate {
 	)
 }
 
-func playAfterTranscode(s *discordgo.Session, m *discordgo.MessageCreate, p *service.Player, args map[string]string) error {
+type audioStream struct {
+	srcVideoUrlStr string
+	size           int64
+	*youtube.Video
+	*youtube.Format
+	httpClient  *http.Client
+	dstFilePath string
+}
+
+type flushedState struct {
+	rwm     sync.RWMutex
+	flushed bool
+}
+
+func (fs *flushedState) setFlushed() {
+	fs.rwm.Lock()
+	defer fs.rwm.Unlock()
+
+	fs.flushed = true
+}
+
+func (fs *flushedState) Flushed() bool {
+	fs.rwm.RLock()
+	defer fs.rwm.RUnlock()
+
+	return fs.flushed
+}
+
+type readCloser struct {
+	flushedState
+	read  func([]byte) (int, error)
+	close func() error
+}
+
+type countingReader struct {
+	reader    io.Reader
+	bytesRead int64
+}
+
+func newCountingReader(r io.Reader) *countingReader {
+	return &countingReader{
+		reader: r,
+	}
+}
+
+func (r *countingReader) Read(p []byte) (n int, err error) {
+	n, err = r.reader.Read(p)
+	r.bytesRead += int64(n)
+	return n, err
+}
+
+func (rc *readCloser) Read(p []byte) (int, error) {
+	return rc.read(p)
+}
+
+func (rc *readCloser) Close() error {
+	return rc.close()
+}
+
+func (as *audioStream) SrcUrlStr() string {
+	return as.srcVideoUrlStr
+}
+
+func (as *audioStream) Cached() bool {
+
+	info, err := os.Stat(as.dstFilePath)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			log.Err(err).
+				Msg("failed to stat file system")
+			return false
+		}
+
+		return false
+	}
+
+	if info.Size() == 0 {
+		os.Remove(as.dstFilePath)
+		return false
+	}
+
+	return true
+}
+
+func (as *audioStream) ReadCloser(ctx context.Context, wg *sync.WaitGroup) (io.ReadCloser, error) {
+
+	if as.Cached() {
+		log.Debug().
+			Str("url", as.srcVideoUrlStr).
+			Str("cached_file", as.dstFilePath).
+			Msg("playing from cache")
+		return os.Open(as.dstFilePath)
+	}
+
+	log.Debug().
+		Str("url", as.srcVideoUrlStr).
+		Msg("transcoding just in time and playing from transcode activity")
+
+	var errResp struct {
+		sync.RWMutex
+		err error
+	}
+
+	setErr := func(err error) {
+		if err == nil {
+			return
+		}
+
+		errResp.Lock()
+		defer errResp.Unlock()
+
+		if errResp.err != nil {
+			return
+		}
+
+		errResp.err = err
+	}
+
+	getErr := func() error {
+		errResp.RLock()
+		defer errResp.RUnlock()
+
+		return errResp.err
+	}
+
+	tmpF, err := ioutil.TempFile(path.Dir(as.dstFilePath), "melody-bot.*.audio.s16le.tmp")
+	if err != nil {
+		return nil, err
+	}
+
+	tmpFilePath := tmpF.Name()
+
+	ignoredErr := tmpF.Close()
+	_ = ignoredErr
+
+	tmpFilePathCleanup := func() {
+		os.Remove(tmpFilePath)
+	}
+
+	pr, pw := io.Pipe()
+	ctx, cancel := context.WithCancel(ctx)
+	result := readCloser{
+		close: func() error {
+			defer cancel()
+			defer func() {
+				if tmpFilePathCleanup == nil {
+					return
+				}
+
+				log.Debug().
+					Err(getErr()).
+					Str("src_url", as.srcVideoUrlStr).
+					Str("dst_path", as.dstFilePath).
+					Msg("could not cache audio stream")
+
+				tmpFilePathCleanup()
+			}()
+			pr.Close()
+			return nil
+		},
+	}
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		defer cancel()
+
+		defer pw.Close()
+
+		var dlc youtube.Client
+		dlc.HTTPClient = as.httpClient
+
+		f, s, err := dlc.GetStream(as.Video, as.Format)
+		if err != nil {
+			setErr(err)
+			return
+		}
+		defer f.Close()
+
+		cr := newCountingReader(f)
+
+		if s != as.size {
+			setErr(errors.New("unexpected stream size detected on open"))
+			return
+		}
+
+		escape := func(s string) string {
+			return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
+		}
+
+		cmd := exec.CommandContext(ctx, "bash", "-c", "set -eo pipefail && ffmpeg -f mp4 -y -loglevel quiet -i pipe: -ar 48000 -ac 1 -vn -f s16le pipe:1 | tee "+escape(tmpFilePath))
+		cmd.Stdin = cr
+		bw := bufio.NewWriter(pw)
+		cmd.Stdout = bw
+		defer bw.Flush()
+
+		if err := cmd.Run(); err != nil {
+			setErr(fmt.Errorf("stream conversion process failed: %w", err))
+			return
+		}
+
+		if cr.bytesRead != as.size {
+			err := errors.New("unexpected end of stream during download")
+
+			log.Err(err).
+				Str("src_url", as.srcVideoUrlStr).
+				Str("dst_path", as.dstFilePath).
+				Int64("bytes_read", cr.bytesRead).
+				Int64("size", as.size).
+				Msg("error")
+
+			setErr(err)
+			return
+		}
+	}()
+
+	result.read = func(b []byte) (int, error) {
+		if err := getErr(); err != nil {
+			return 0, err
+		}
+
+		i, err := pr.Read(b)
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+
+				// fully wait for writer to return
+				<-ctx.Done()
+
+				result.setFlushed()
+
+				if err := os.Rename(tmpFilePath, as.dstFilePath); err != nil {
+					log.Err(err).
+						Str("src", tmpFilePath).
+						Str("dst", as.dstFilePath).
+						Msg("failed to rename file")
+
+					return i, err
+				}
+
+				// tmp file is now gone, don't try to remove it
+				tmpFilePathCleanup = nil
+
+				log.Debug().
+					Str("src_url", as.srcVideoUrlStr).
+					Str("dst_path", as.dstFilePath).
+					Msg("cached audio stream")
+
+				return i, err
+			} else {
+				cancel()
+			}
+
+			return i, err
+		}
+
+		return i, nil
+	}
+
+	return &result, nil
+}
+
+var audioStreamHttpClient = http.Client{}
+
+func playAfterTranscode(ctx context.Context, s *discordgo.Session, m *discordgo.MessageCreate, p *service.Player, args map[string]string) error {
 	urlStr := args["url"]
 
 	if urlStr == "" {
@@ -197,188 +329,79 @@ func playAfterTranscode(s *discordgo.Session, m *discordgo.MessageCreate, p *ser
 		return errors.New("no audience in voice channel")
 	}
 
-	dlc := ytdl.Client{
-		HTTPClient: http.DefaultClient,
-		Logger:     log.Logger,
+	var dlc youtube.Client
+
+	ytVid, err := dlc.GetVideoContext(ctx, urlStr)
+	if err != nil {
+		return err
 	}
 
-	vidInfo, err := dlc.GetVideoInfo(context.Background(), urlStr)
-	if err != nil {
-		return fmt.Errorf("failed to get video info: %v", err)
-	} else if vidInfo.ID == "" {
-		return errors.New("failed to get video id")
-	}
+	cacheDir := path.Join(".media-cache", "v1", ytVid.ID)
+	cachedRef := path.Join(cacheDir, "audio.s16le")
 
-	// log.Debug().
-	// 	Interface("video_info", vidInfo).
-	// 	Msg("video info")
-
-	cacheDir := path.Join(".media-cache", "v1", vidInfo.ID)
-	downloadedRef := path.Join(cacheDir, ".dl-complete")
-
-	err = os.MkdirAll(cacheDir, os.ModePerm)
-	if err != nil {
+	if err := os.MkdirAll(cacheDir, os.ModePerm); err != nil {
 		return fmt.Errorf("failed to make cache directory: %s: %v", cacheDir, err)
 	}
 
-	verifyCacheEntry := func() (bool, error) {
-
-		_, err := os.Stat(downloadedRef)
-		if err != nil {
-			if !os.IsNotExist(err) {
-				return false, fmt.Errorf("failed to read file system: %v", err)
-			}
-
-			return false, nil
-		}
-
-		return true, nil
+	as := &audioStream{
+		srcVideoUrlStr: urlStr,
+		Video:          ytVid,
+		httpClient:     &audioStreamHttpClient,
+		dstFilePath:    cachedRef,
 	}
 
-	permit, err := playAcquireWorkPermit(vidInfo.ID, verifyCacheEntry)
-	if err != nil {
-		return err
-	}
-	if !permit.Acquired() {
-		return fmt.Errorf("media already processing: %s", urlStr)
-	}
-	defer permit.Fail()
+	formats := ytVid.Formats.Type("video/mp4")
+	formats.Sort()
 
-	// short circuit if cached result exists
-	{
-		ok, err := verifyCacheEntry()
-		if err != nil {
-			return err
-		}
+	for _, f := range formats {
 
-		if ok {
-			_, err = s.ChannelMessageSend(m.ChannelID, "```\ndownload skipped, cached: "+urlStr+"\n```")
-			if err != nil {
-				log.Err(err).
-					Msg("failed to send play from cache confirmation")
-			}
-
-			play(p, m, urlStr, cacheDir, false)
-
-			return permit.Done()
-		}
-	}
-
-	// deferRemoveTrack will become a nop once transcoding is finalized
-	deferRemoveTrack := func() {
-		p.RemoveTrack(urlStr)
-	}
-
-	play(p, m, urlStr, "", false)
-	defer func() {
-		deferRemoveTrack()
-	}()
-
-	_, err = s.ChannelMessageSend(m.ChannelID, "```\ndownloading audio file:\n"+urlStr+"\n```")
-	if err != nil {
-		log.Err(err).
-			Msg("failed to send download start msg")
-	}
-
-	var dstFilePath string
-	var dstFormat *ytdl.Format
-
-	// TODO: find the lowest size video format
-	for _, f := range vidInfo.Formats {
-
-		if strings.ToLower(f.Extension) != "mp4" {
+		if f.AudioChannels <= 0 {
 			continue
 		}
 
-		dstFilePath = path.Join(cacheDir, "video.mp4")
-		dstFormat = f
-		break
+		// TODO: in the future try to select the lowest bitrate
+		// if dstFormat != nil {
+		// 	if dstFormat.Bitrate <= f.Bitrate {
+		// 		continue
+		// 	}
+		// }
+
+		n := f
+
+		newReader, newSize, err := dlc.GetStreamContext(ctx, ytVid, &n)
+		if err != nil {
+			continue
+		}
+
+		newReader.Close()
+
+		if newSize == 0 {
+			continue
+		}
+
+		// choose this stream format
+
+		as.size = newSize
+		as.Format = &n
 	}
 
-	if dstFormat == nil {
+	if as == nil {
 		return errors.New("failed to find a usable video format")
 	}
 
-	log.Warn().
-		Str("author_id", m.Author.ID).
-		Str("author_username", m.Author.Username).
-		Str("message_id", m.ID).
-		Interface("message_timestamp", m.Message.Timestamp).
-		Msg("video download starting")
+	log.Debug().
+		Str("ID", as.ID).
+		Int("ItagNo", as.ItagNo).
+		Int("Bitrate", as.Bitrate).
+		Str("AudioQuality", as.AudioQuality).
+		Str("AudioSampleRate", as.AudioSampleRate).
+		Str("Quality", as.Quality).
+		Str("QualityLabel", as.QualityLabel).
+		Str("URL", as.URL).
+		Int("AudioChannels", as.AudioChannels).
+		Msg("found video format")
 
-	err = func() error {
-
-		f, err := os.OpenFile(dstFilePath, os.O_WRONLY|os.O_CREATE, 0664)
-		if err != nil {
-			return err
-		}
-
-		// TODO: instead of deleting incomplete downloads, try appending to whatever previous progress has been done
-
-		// deferDeleteFile will become a nop after the download is fully confirmed
-		// using defer to ensure the cleanup occurs even if there is a panic
-		deferDeleteFile := func() {
-			os.Remove(dstFilePath)
-		}
-		defer func() {
-			deferDeleteFile()
-		}()
-
-		err = dlc.Download(context.Background(), vidInfo, dstFormat, f)
-		if err != nil {
-			return err
-		}
-
-		err = f.Close()
-		if err != nil {
-			return err
-		}
-
-		deferDeleteFile = func() {}
-
-		return nil
-	}()
-	if err != nil {
-		return fmt.Errorf("download interrupted: %v", err)
-	}
-
-	_, err = s.ChannelMessageSend(m.ChannelID, "```\ndownload complete:\n"+urlStr+"\n```")
-	if err != nil {
-		log.Err(err).
-			Msg("failed to send download done msg")
-	}
-
-	err = extractAudio(s, m, urlStr, dstFilePath)
-	if err != nil {
-		return fmt.Errorf("failed to extract audio: %v", err)
-	}
-
-	// remove no longer useful raw video file
-	err = os.Remove(dstFilePath)
-	if err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("failed to remove cached video file: %s: %v", dstFilePath, err)
-	}
-
-	fi, err := os.OpenFile(downloadedRef, os.O_RDONLY|os.O_CREATE, 0666)
-	if err != nil {
-		return fmt.Errorf("failed to create download complete indicator: %v", err)
-	}
-	_ = fi.Close() // don't care about error here, just wanted to create the file and we did
-
-	_, err = s.ChannelMessageSend(m.ChannelID, "```\ntranscode complete, queuing:\n"+urlStr+"\n```")
-	if err != nil {
-		log.Err(err).
-			Msg("failed to send download done msg")
-	}
-
-	err = permit.Done()
-	if err != nil {
-		return err
-	}
-
-	play(p, m, urlStr, cacheDir, true)
-
-	deferRemoveTrack = func() {}
+	play(p, m, as)
 
 	return nil
 }
@@ -395,12 +418,12 @@ func findVoiceChannel(s *discordgo.Session, m *discordgo.MessageCreate, p *servi
 		return result, nil
 	}
 
-	// find current voice channel of message sender and join it
-
-	g, err := s.Guild(m.GuildID)
+	g, err := s.State.Guild(m.GuildID)
 	if err != nil {
-		return nil, err
+		return result, err
 	}
+
+	// find current voice channel of message sender and join it
 
 	for _, v := range g.VoiceStates {
 		if v.UserID != m.Author.ID {
@@ -408,9 +431,9 @@ func findVoiceChannel(s *discordgo.Session, m *discordgo.MessageCreate, p *servi
 		}
 
 		mute := false
-		deaf := false
+		deaf := true
 
-		result, err = s.ChannelVoiceJoin(m.GuildID, v.ChannelID, mute, deaf)
+		result, err := s.ChannelVoiceJoin(m.GuildID, v.ChannelID, mute, deaf)
 		if err != nil {
 			return nil, err
 		}
@@ -423,113 +446,9 @@ func findVoiceChannel(s *discordgo.Session, m *discordgo.MessageCreate, p *servi
 	return nil, nil
 }
 
-// extractAudioMutex prevents more than one transcoding activity
-// from occuring at any given point in time
-var extractAudioMutex sync.Mutex
-
-func extractAudio(s *discordgo.Session, m *discordgo.MessageCreate, urlStr, vidPath string) error {
-
-	extractAudioMutex.Lock()
-	defer extractAudioMutex.Unlock()
-
-	_, err := s.ChannelMessageSend(m.ChannelID, "```\ntranscode starting:\n"+urlStr+"\n```")
-	if err != nil {
-		log.Err(err).
-			Msg("failed to send download done msg")
-	}
-
-	log.Warn().
-		Str("file", vidPath).
-		Msg("post-processing download")
-
-	tmpDir := path.Join(path.Dir(vidPath), "tmp")
-	err = os.RemoveAll(tmpDir)
-	if err != nil {
-		return fmt.Errorf("failed to ensure tmp dir was removed: %s: %v", tmpDir, err)
-	}
-
-	err = os.MkdirAll(tmpDir, os.ModePerm)
-	if err != nil {
-		return fmt.Errorf("failed to make tmp dir: %s: %v", tmpDir, err)
-	}
-
-	// ensure video is removed from file
-	onlyAudio := path.Join(tmpDir, "only-audio."+path.Base(vidPath))
-	{
-
-		cmd := exec.Command("nice", "ffmpeg", "-y", "-loglevel", "quiet", "-i", vidPath, "-ar", strconv.Itoa(service.SampleRate), "-ac", "1", "-vn", onlyAudio)
-
-		// TODO: capture and log instead
-		cmd.Stdin = nil
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
-
-		err = cmd.Run()
-		if err != nil {
-			return fmt.Errorf("ffmpeg command (audio only) failed: %v", err)
-		}
-
-		log.Info().Str("video_path", vidPath).Msg("done extracting audio")
-	}
-
-	// normalize audio using EBU: https://en.wikipedia.org/wiki/EBU_R_128
-	normEbuWav := path.Join(tmpDir, "norm-ebu.wav")
-	{
-
-		cmd := exec.Command("nice", "ffmpeg-normalize", "--quiet", "-ar", strconv.Itoa(service.SampleRate), onlyAudio, "-o", normEbuWav)
-
-		// TODO: capture and log instead
-		cmd.Stdin = nil
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
-
-		err = cmd.Run()
-		if err != nil {
-			return fmt.Errorf("ffmpeg-normalize command (normalize audio) failed: %v", err)
-		}
-
-		log.Info().Str("video_path", vidPath).Msg("done normalizing loudness to .wav format")
-	}
-
-	// convert from .wav to discord-opus format
-	audioFile := path.Join(path.Dir(vidPath), AudioFileName)
-	{
-
-		escape := func(s string) string {
-			return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
-		}
-
-		cmd := exec.Command("bash", "-c", "set -eo pipefail ; nice ffmpeg -y -loglevel quiet -i "+escape(normEbuWav)+" -ar "+strconv.Itoa(service.SampleRate)+" -ac 1 -vn -f s16le pipe:1 | nice ./build/bin/convert-to-discord-opus -o "+escape(audioFile))
-
-		// TODO: capture and log instead
-		cmd.Stdin = nil
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
-
-		err = cmd.Run()
-		if err != nil {
-			return fmt.Errorf("bash (ffmpeg + convert-to-discord-opus) command failed: %v", err)
-		}
-
-		log.Info().Str("video_path", vidPath).Msg("done converting .wav file to discord-opus")
-	}
-
-	err = os.RemoveAll(tmpDir)
-	if err != nil {
-		return fmt.Errorf("failed to ensure tmp dir was cleaned up: %s: %v", tmpDir, err)
-	}
-
-	return nil
-}
-
 // play can be called multiple times
 // when the cacheDir is not empty then the file will be playable
-func play(p *service.Player, m *discordgo.MessageCreate, url string, cacheDir string, patch bool) {
-	var audioFile string
+func play(p *service.Player, m *discordgo.MessageCreate, as service.AudioStreamer) {
 
-	if cacheDir != "" {
-		audioFile = path.Join(cacheDir, AudioFileName)
-	}
-
-	p.Play(m, url, m.Message.Author.ID, m.Author.Mention(), audioFile, patch)
+	p.Play(m, m.Message.Author.ID, m.Author.Mention(), as)
 }

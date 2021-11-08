@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"regexp"
 
 	"github.com/bwmarrin/discordgo"
@@ -16,7 +17,7 @@ func Echo() HandleMessageCreate {
 		newRegexMatcher(
 			false,
 			regexp.MustCompile(`^\s*echo\s+(?P<msg>[^\s]*.*?)\s*$`),
-			func(s *discordgo.Session, m *discordgo.MessageCreate, _ *service.Player, args map[string]string) error {
+			func(_ context.Context, s *discordgo.Session, m *discordgo.MessageCreate, _ *service.Player, args map[string]string) error {
 
 				msg := args["msg"]
 				if msg == "" {

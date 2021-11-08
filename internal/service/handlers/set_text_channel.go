@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"regexp"
 
 	"github.com/bwmarrin/discordgo"
@@ -16,7 +17,7 @@ func SetTextChannel() HandleMessageCreate {
 		newRegexMatcher(
 			true,
 			regexp.MustCompile(`^\s*set\s*text\s*channel\s*$`),
-			func(s *discordgo.Session, m *discordgo.MessageCreate, p *service.Player, _ map[string]string) error {
+			func(_ context.Context, s *discordgo.Session, m *discordgo.MessageCreate, p *service.Player, _ map[string]string) error {
 
 				p.SetTextChannel(m.Message.ChannelID)
 

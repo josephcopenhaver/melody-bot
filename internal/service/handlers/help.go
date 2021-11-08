@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"sort"
 
 	"github.com/bwmarrin/discordgo"
@@ -18,7 +19,7 @@ func Help(inputHandlers []HandleMessageCreate) HandleMessageCreate {
 		newWordMatcher(
 			false,
 			[]string{"help"},
-			func(s *discordgo.Session, m *discordgo.MessageCreate, _ *service.Player, _ map[string]string) error {
+			func(_ context.Context, s *discordgo.Session, m *discordgo.MessageCreate, _ *service.Player, _ map[string]string) error {
 
 				userTxtChan, err := s.UserChannelCreate(m.Author.ID)
 				if err != nil {

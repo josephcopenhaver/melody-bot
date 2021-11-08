@@ -1,12 +1,16 @@
 package service
 
 import (
+	"bufio"
+	"context"
+	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
-	"os"
 	"sync"
 	"sync/atomic"
 
+	"github.com/josephcopenhaver/gopus"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 
@@ -28,6 +32,7 @@ const (
 	SignalNext
 	SignalPrevious
 	SignalRestartTrack
+	SignalDispose
 	//
 	SignalUnusedUpper
 )
@@ -43,6 +48,7 @@ func (s Signal) String() string {
 		"next",
 		"previous",
 		"restart-track",
+		"dispose",
 	}[int(s)]
 }
 
@@ -73,19 +79,21 @@ func (s State) String() string {
 	}[int(s)]
 }
 
-type Track struct {
-	// private
-	audioFile string
+type AudioStreamer interface {
+	ReadCloser(context.Context, *sync.WaitGroup) (io.ReadCloser, error)
+	SrcUrlStr() string
+	Cached() bool
+}
 
+type Track struct {
 	// public
-	Url           string
+	AudioStreamer
 	AuthorId      string
 	AuthorMention string
 }
 
 type playRequest struct {
 	track *Track
-	patch bool
 }
 
 type Playlist struct {
@@ -121,7 +129,7 @@ func (m *PlayerMemory) reset() {
 func (m *PlayerMemory) indexOfTrack(url string) int {
 
 	for i, t := range m.tracks {
-		if t.Url == url {
+		if t.SrcUrlStr() == url {
 			return i
 		}
 	}
@@ -134,51 +142,39 @@ func (m *PlayerMemory) play(s State) {
 	r := <-m.playRequests
 
 	if r.track == nil {
+		log.Debug().Msg("no track in play handler?")
 		return
 	}
 
 	t := *r.track
 
-	if r.patch {
-		// only changes the record value if a match can be found in the playlist
-		// and it is clearly missing an audioFile
-		//
-		// does not attempt to insert it
-		i := m.indexOfTrack(t.Url)
-		if i >= 0 && m.tracks[i].audioFile == "" {
-			m.tracks[i] = t
-		}
-	} else {
+	log.Debug().
+		Str("state", s.String()).
+		Int("current_track_idx", m.currentTrackIdx).
+		Int("num_tracks", len(m.tracks)).
+		Str("new_track_url", t.SrcUrlStr()).
+		Msg("play track")
 
-		switch s {
-		case StateDefault:
-			m.tracks = []Track{t}
-			m.currentTrackIdx = -1
-		case StateIdle:
-			i := m.indexOfTrack(t.Url)
-			if i == -1 {
-				m.tracks = append(m.tracks, t)
-			} else if t.audioFile != "" && m.tracks[i].audioFile == "" {
-				// implicit patch
-				m.tracks[i] = t
-			}
-			m.currentTrackIdx = len(m.tracks) - 2
-		case StatePaused:
-			i := m.indexOfTrack(t.Url)
-			if i == -1 {
-				m.tracks = append(m.tracks, t)
-			} else if t.audioFile != "" && m.tracks[i].audioFile == "" {
-				// implicit patch
-				m.tracks[i] = t
-			}
-		case StatePlaying:
-			i := m.indexOfTrack(t.Url)
-			if i == -1 {
-				m.tracks = append(m.tracks, t)
-			} else if t.audioFile != "" && m.tracks[i].audioFile == "" {
-				// implicit patch
-				m.tracks[i] = t
-			}
+	switch s {
+	case StateDefault:
+		m.tracks = []Track{t}
+		m.currentTrackIdx = 0
+	case StateIdle:
+		i := m.indexOfTrack(t.SrcUrlStr())
+		if i == -1 {
+			m.tracks = append(m.tracks, t)
+			m.currentTrackIdx = len(m.tracks) - 1
+		}
+		// TODO: else if already in track list, then consider moving track to end or moving the currentTrackIdx
+	case StatePaused:
+		i := m.indexOfTrack(t.SrcUrlStr())
+		if i == -1 {
+			m.tracks = append(m.tracks, t)
+		}
+	case StatePlaying:
+		i := m.indexOfTrack(t.SrcUrlStr())
+		if i == -1 {
+			m.tracks = append(m.tracks, t)
 		}
 	}
 }
@@ -189,8 +185,8 @@ func (m *PlayerMemory) hasAudience(s *discordgo.Session, guildId string) bool {
 		return false
 	}
 
-	g, err := s.Guild(guildId)
-	if err != nil {
+	g, err := s.State.Guild(guildId)
+	if err != nil || g == nil {
 		log.Err(err).Msg("player: hasAudience: failed to get guild voice states")
 		return false
 	}
@@ -232,6 +228,8 @@ type PlayerStateMachine struct {
 }
 
 type Player struct {
+	ctx            context.Context
+	wg             *sync.WaitGroup
 	mutex          sync.RWMutex
 	memory         atomic.Value
 	discordSession *discordgo.Session
@@ -241,9 +239,11 @@ type Player struct {
 	signalChan   chan TracedSignal
 }
 
-func NewPlayer(s *discordgo.Session, guildId string) *Player {
+func NewPlayer(ctx context.Context, wg *sync.WaitGroup, s *discordgo.Session, guildId string) *Player {
 
 	p := &Player{
+		ctx:            ctx,
+		wg:             wg,
 		discordSession: s,
 		discordGuildId: guildId,
 		signalChan:     make(chan TracedSignal, 1),
@@ -259,7 +259,9 @@ func NewPlayer(s *discordgo.Session, guildId string) *Player {
 		playRequests:    playRequests,
 		currentTrackIdx: -1,
 	})
-	go p.playerGoroutine()
+
+	wg.Add(1)
+	go p.playerGoroutine(wg)
 
 	return p
 }
@@ -273,29 +275,18 @@ func (p *Player) nextTrack() *Track {
 
 	p.withMemory(func(m *PlayerMemory) {
 
-		numCheckedTracks := 0
+		m.currentTrackIdx++
 
-		for numCheckedTracks < len(m.tracks) {
-
-			numCheckedTracks++
-			m.currentTrackIdx++
-
-			if m.currentTrackIdx >= len(m.tracks) {
-				if m.notLooping {
-					m.currentTrackIdx = -1
-					return
-				}
-				m.currentTrackIdx = 0
-			}
-
-			if m.tracks[m.currentTrackIdx].audioFile != "" {
-				track := m.tracks[m.currentTrackIdx]
-				result = &track
+		if m.currentTrackIdx >= len(m.tracks) {
+			if m.notLooping {
+				m.currentTrackIdx = -1
 				return
 			}
-
-			m.currentTrackIdx = -1
+			m.currentTrackIdx = 0
 		}
+
+		track := m.tracks[m.currentTrackIdx]
+		result = &track
 	})
 
 	return result
@@ -303,13 +294,13 @@ func (p *Player) nextTrack() *Track {
 
 func (p *Player) withMemoryErr(f func(m *PlayerMemory) error) error {
 
-	// log.Debug().Msg("withMemory: waiting for lock")
+	// p.debug().Msg("withMemory: waiting for lock")
 
 	p.mutex.Lock()
 	defer p.mutex.Unlock()
 
-	// defer log.Debug().Msg("withMemory: releasing lock")
-	// log.Debug().Msg("withMemory: got lock")
+	// defer p.debug().Msg("withMemory: releasing lock")
+	// p.debug().Msg("withMemory: got lock")
 
 	resp := p.memory.Load()
 
@@ -356,14 +347,26 @@ func (p *Player) restartTrack() {
 	})
 }
 
-func (p *Player) previousTrack() {
+func (p *Player) previousTrack(offset int) {
 	p.withMemory(func(m *PlayerMemory) {
 		if len(m.tracks) < 2 {
 			m.currentTrackIdx = -1
+			return
 		}
-		m.currentTrackIdx -= 2
-		if m.currentTrackIdx < -1 {
-			m.currentTrackIdx = len(m.tracks) - 2
+
+		if m.currentTrackIdx < 0 {
+			m.currentTrackIdx = len(m.tracks) - 1
+		}
+
+		offset++
+
+		for offset > 0 {
+			offset--
+
+			m.currentTrackIdx -= 1
+			if m.currentTrackIdx < 0 {
+				m.currentTrackIdx = len(m.tracks) - 1
+			}
 		}
 	})
 }
@@ -409,17 +412,15 @@ func (p *Player) CycleRepeatMode(srcEvt interface{}) string {
 	return result
 }
 
-func (p *Player) Play(srcEvt interface{}, url string, authorId, authorMention string, file string, patch bool) {
+func (p *Player) Play(srcEvt interface{}, authorId, authorMention string, as AudioStreamer) {
 	p.withMemory(func(m *PlayerMemory) {
 
 		m.playRequests <- &playRequest{
 			track: &Track{
-				audioFile:     file,
-				Url:           url,
+				AudioStreamer: as,
 				AuthorId:      authorId,
 				AuthorMention: authorMention,
 			},
-			patch: patch,
 		}
 
 		p.signalChan <- TracedSignal{srcEvt, SignalPlay}
@@ -540,7 +541,7 @@ func (p *Player) GetPlaylist() Playlist {
 	return result
 }
 
-func (p *Player) setDefaultTextChannel(v interface{}) {
+func (p *Player) setDefaultTextChannel(s Signal, v interface{}) {
 
 	switch e := v.(type) {
 	case *discordgo.MessageCreate:
@@ -548,14 +549,17 @@ func (p *Player) setDefaultTextChannel(v interface{}) {
 			return
 		}
 
-		p.SetTextChannel(e.Message.ChannelID)
-	default:
-		if v == nil {
-			return
-		}
+		var changed bool
+		p.withMemory(func(m *PlayerMemory) {
+			if m.textChannel == "" {
+				changed = true
+				m.textChannel = e.Message.ChannelID
+			}
+		})
 
-		log.Error().
-			Msg("failed to get text channel from first event sent to player")
+		if changed {
+			p.broadcastTextMessage("text channel is now this one")
+		}
 	}
 }
 
@@ -570,7 +574,7 @@ func (p *Player) broadcastTextMessage(s string) {
 		return
 	}
 
-	log.Debug().
+	p.debug().
 		Str("guild_id", p.discordGuildId).
 		Str("notification_message", s).
 		Msg("broadcasting notification")
@@ -615,7 +619,7 @@ func (p *Player) sendChannel() chan<- []byte {
 
 func (p *Player) debug() *zerolog.Event {
 	return log.Debug().
-		Interface("state", p.stateMachine.state).
+		Str("state", p.stateMachine.state.String()).
 		Str("guild_id", p.discordGuildId)
 }
 
@@ -636,32 +640,65 @@ func (p *Player) setNiceness(n int) error {
 	return nil
 }
 
-func (p *Player) playerGoroutine() {
+func (p *Player) playerGoroutine(wg *sync.WaitGroup) {
+	defer wg.Done()
 
 	defer func() {
-		p.debug().Msg("player: permanently broken")
+		if p.ctx.Err() == nil {
+			p.debug().Msg("player: permanently broken") // should never happen
+		}
 	}()
 
 	p.debug().Msg("player: starting")
 
-	for {
+	doneChan := p.ctx.Done()
+	go func() {
+		<-doneChan
+		p.signalChan <- TracedSignal{nil, SignalDispose}
+	}()
+
+	var done bool
+	var errCount int
+	for !done {
 		func() {
 			defer func() {
 				if r := recover(); r != nil {
 					log.Error().
 						Interface("error", r).
-						Interface("state", p.stateMachine.state).
+						Str("state", p.stateMachine.state.String()).
 						Str("guild_id", p.discordGuildId).
 						Msg("player: recovered from panic")
 				}
 			}()
 			err := p.playerStateMachine()
 			if err != nil {
-				log.Err(err).Msg("player: error occured during playback")
+				if err == ErrDisposed {
+					done = true
+					return
+				}
+				log.Err(err).Msg("player: error occurred during playback")
+
+				errCount++
+				var numTracks int
+				p.withMemory(func(m *PlayerMemory) {
+					numTracks = len(m.tracks)
+				})
+				if errCount >= numTracks {
+					// TODO: make this a stop action instead
+					log.Err(err).Msg("player: too many errors occurred, resetting playback")
+
+					p.reset()
+				}
+			} else {
+				errCount = 0
 			}
 		}()
 	}
+
+	p.reset()
 }
+
+var ErrDisposed = errors.New("player disposed")
 
 func (p *Player) playerStateMachine() error {
 	var err error
@@ -676,11 +713,13 @@ func (p *Player) playerStateMachine() error {
 		// signals recognized when in initial state
 		s := <-p.signalChan
 
-		p.setDefaultTextChannel(s.src)
+		p.setDefaultTextChannel(s.sig, s.src)
 
 		p.debug().Msg("player: got signal before playing track")
 
 		switch s.sig {
+		case SignalDispose:
+			return ErrDisposed
 		case SignalNewVoiceConnection:
 			sendChan = nil
 		case SignalPlay:
@@ -710,9 +749,13 @@ func (p *Player) playerStateMachine() error {
 		// signals recognized when in idle state ( stopped or partially errored )
 		s := <-p.signalChan
 
+		p.setDefaultTextChannel(s.sig, s.src)
+
 		p.debug().Msg("player: got signal before playing track")
 
 		switch s.sig {
+		case SignalDispose:
+			return ErrDisposed
 		case SignalNewVoiceConnection:
 			sendChan = nil
 		case SignalReset:
@@ -738,12 +781,7 @@ func (p *Player) playerStateMachine() error {
 		case SignalNext:
 			// do nothing, let loop normally advance
 		case SignalPrevious:
-			p.withMemory(func(m *PlayerMemory) {
-				m.currentTrackIdx -= 1
-				if m.currentTrackIdx < -1 {
-					m.currentTrackIdx = len(m.tracks) - 1
-				}
-			})
+			p.previousTrack(0) // nothing is currently playing
 		}
 	}
 
@@ -777,7 +815,7 @@ func (p *Player) playerStateMachine() error {
 		return nil
 	} else {
 
-		msg := "now playing: " + track.Url
+		msg := "now playing: " + track.SrcUrlStr()
 		if track.AuthorMention != "" {
 			msg += " ( added by " + track.AuthorMention + " )"
 		}
@@ -790,17 +828,32 @@ func (p *Player) playerStateMachine() error {
 		return err
 	}
 
-	f, err := os.Open(track.audioFile)
+	pctx := p.ctx
+	if pctx.Err() != nil {
+		return nil
+	}
+
+	ctx, cancel := context.WithCancel(p.ctx)
+	defer cancel()
+
+	f, err := track.ReadCloser(ctx, p.wg)
 	if err != nil {
-		return fmt.Errorf("failed to open audio file: %s: %v", track.audioFile, err)
+		return fmt.Errorf("failed to open audio stream: %s, %t: %v", track.SrcUrlStr(), track.Cached(), err)
 	}
 	defer f.Close()
 
+	//
 	// read packets from file and buffer them to send to broadcast channel
+	//
 
-	opusReader := NewOpusReader(f)
-	outPackets := [NumPacketBuffers][SampleMaxBytes]byte{}
-	outPacketIdx := 0
+	br := bufio.NewReaderSize(f, SampleMaxBytes)
+
+	opusEncoder, err := gopus.NewEncoder(SampleRate, NumChannels, gopus.Audio)
+	if err != nil {
+		return err
+	}
+
+	pcmBuf := make([]int16, SampleSize)
 
 	for {
 
@@ -813,7 +866,11 @@ func (p *Player) playerStateMachine() error {
 		// type: non-blocking
 		// signals recognized when in playing state
 		case s := <-p.signalChan:
+			p.setDefaultTextChannel(s.sig, s.src)
+
 			switch s.sig {
+			case SignalDispose:
+				return ErrDisposed
 			case SignalNewVoiceConnection:
 				sendChan = p.sendChannel()
 				if sendChan == nil {
@@ -824,7 +881,7 @@ func (p *Player) playerStateMachine() error {
 					m.play(p.stateMachine.state)
 				})
 			case SignalPrevious:
-				p.previousTrack()
+				p.previousTrack(1) // current track is playing
 				return nil
 			case SignalStop:
 				p.restartTrack()
@@ -853,7 +910,12 @@ func (p *Player) playerStateMachine() error {
 					// type: blocking
 					// signals recognized when in paused state
 					s := <-p.signalChan
+
+					p.setDefaultTextChannel(s.sig, s.src)
+
 					switch s.sig {
+					case SignalDispose:
+						return ErrDisposed
 					case SignalNewVoiceConnection:
 						sendChan = nil
 					case SignalPlay:
@@ -866,7 +928,7 @@ func (p *Player) playerStateMachine() error {
 
 						p.broadcastTextMessage(broadcastMsg)
 					case SignalPrevious:
-						p.previousTrack()
+						p.previousTrack(1) // current track is paused
 						p.stateMachine.state = StateIdle
 						return nil
 					case SignalNext:
@@ -912,23 +974,44 @@ func (p *Player) playerStateMachine() error {
 			p.debug().Msg("player: processed signal while playing")
 		}
 
-		numBytes, err := opusReader.ReadPacket(outPackets[outPacketIdx][:])
+		// TODO: modify discordgo to support a packet pool
+		packet := make([]byte, SampleMaxBytes)
+
+		if pctx.Err() != nil {
+			return ErrDisposed
+		}
+
+		err = binary.Read(br, binary.LittleEndian, &pcmBuf)
 		if err != nil {
-			if err == io.EOF {
+			if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+
+				if flushable, ok := f.(interface{ Flushed() bool }); ok && flushable.Flushed() {
+					return nil
+				}
+
+				p.debug().Err(err).Msg("file read interrupted")
+
 				return nil
 			}
-			return fmt.Errorf("error reading file: %s: %v", track.audioFile, err)
+			return fmt.Errorf("error reading track: %s: %v", track.SrcUrlStr(), err)
+		}
+
+		numBytes, err := opusEncoder.Encode(pcmBuf, SampleSize, packet)
+		if err != nil {
+			return fmt.Errorf("error encoding track to opus: %s: %v", track.SrcUrlStr(), err)
 		}
 
 		if numBytes == 0 {
+			p.debug().Msg("opus encode created zero bytes")
 			return nil
 		}
 
-		sendChan <- outPackets[outPacketIdx][:numBytes]
-
-		outPacketIdx++
-		if outPacketIdx >= NumPacketBuffers {
-			outPacketIdx = 0
+		if pctx.Err() != nil {
+			return ErrDisposed
 		}
+
+		// TODO: modify discordgo to support a packet pool
+
+		sendChan <- packet[:numBytes]
 	}
 }

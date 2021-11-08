@@ -1,9 +1,8 @@
 package server
 
 import (
-	"os"
-	"os/signal"
-	"syscall"
+	"context"
+	"sync"
 
 	"github.com/bwmarrin/discordgo"
 	"github.com/josephcopenhaver/melody-bot/internal/service"
@@ -16,6 +15,8 @@ type EventHandlers struct {
 }
 
 type Server struct {
+	ctx            context.Context
+	wg             sync.WaitGroup
 	DiscordSession *discordgo.Session
 	EventHandlers  EventHandlers
 	Brain          *service.Brain
@@ -30,7 +31,14 @@ func New() *Server {
 	}
 }
 
-func (s *Server) ListenAndServe() error {
+func (s *Server) ListenAndServe(ctx context.Context) error {
+
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	s.ctx = ctx
+
 	// open a connection to discord
 	if err := s.DiscordSession.Open(); err != nil {
 		return err
@@ -39,10 +47,15 @@ func (s *Server) ListenAndServe() error {
 	log.Info().
 		Msg("listening")
 
-	// wait for a process signal
-	sc := make(chan os.Signal, 1)
-	signal.Notify(sc, syscall.SIGINT, syscall.SIGTERM, os.Interrupt)
-	<-sc
+	<-ctx.Done()
+
+	log.Warn().
+		Msg("waiting for all players to terminate")
+
+	s.wg.Wait()
+
+	log.Warn().
+		Msg("waiting for discord session to close")
 
 	return s.DiscordSession.Close()
 }

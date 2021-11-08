@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"errors"
 	"regexp"
 	"strings"
@@ -20,7 +21,7 @@ func JoinChannel() HandleMessageCreate {
 		newRegexMatcher(
 			true,
 			regexp.MustCompile(`^\s*join\s+(?P<channel_name>[^\s]+.*?)\s*$`),
-			func(s *discordgo.Session, m *discordgo.MessageCreate, p *service.Player, args map[string]string) error {
+			func(_ context.Context, s *discordgo.Session, m *discordgo.MessageCreate, p *service.Player, args map[string]string) error {
 
 				channelName := args["channel_name"]
 
@@ -40,7 +41,7 @@ func JoinChannel() HandleMessageCreate {
 					}
 
 					mute := false
-					deaf := false
+					deaf := true
 
 					vc, err := s.ChannelVoiceJoin(c.GuildID, c.ID, mute, deaf)
 					if err != nil {

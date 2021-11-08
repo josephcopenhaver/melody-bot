@@ -1,6 +1,7 @@
 package handlers
 
 import (
+	"context"
 	"regexp"
 
 	"github.com/bwmarrin/discordgo"
@@ -16,7 +17,7 @@ func RestartTrack() HandleMessageCreate {
 		newRegexMatcher(
 			true,
 			regexp.MustCompile(`^\s*restart\s+track\s*$`),
-			func(s *discordgo.Session, m *discordgo.MessageCreate, p *service.Player, _ map[string]string) error {
+			func(_ context.Context, s *discordgo.Session, m *discordgo.MessageCreate, p *service.Player, _ map[string]string) error {
 
 				p.RestartTrack(m)
 
