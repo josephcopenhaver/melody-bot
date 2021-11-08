@@ -403,7 +403,7 @@ func findVoiceChannel(s *discordgo.Session, m *discordgo.MessageCreate, p *servi
 		}
 
 		mute := false
-		deaf := false
+		deaf := true
 
 		result, err := s.ChannelVoiceJoin(m.GuildID, v.ChannelID, mute, deaf)
 		if err != nil {

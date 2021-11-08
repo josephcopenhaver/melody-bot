@@ -41,7 +41,7 @@ func JoinChannel() HandleMessageCreate {
 					}
 
 					mute := false
-					deaf := false
+					deaf := true
 
 					vc, err := s.ChannelVoiceJoin(c.GuildID, c.ID, mute, deaf)
 					if err != nil {
