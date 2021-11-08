@@ -142,7 +142,7 @@ func (as *audioStream) ReadCloser(ctx context.Context, wg *sync.WaitGroup) (io.R
 		return errResp.err
 	}
 
-	tmpF, err := ioutil.TempFile("", "melody-bot.*.audio.s16le.tmp")
+	tmpF, err := ioutil.TempFile(path.Dir(as.dstFilePath), "melody-bot.*.audio.s16le.tmp")
 	if err != nil {
 		return nil, err
 	}

@@ -34,5 +34,6 @@ JOSEPHCOPENHAVER_GOPUS_GIT_SHA=17c317f9c9e9545df42c4ffc0bb9252ee6261868
 set -x
 CGO_ENABLED=1 go build \
     -o build/bin/ \
-    -ldflags "-X main.GitSHA=${GIT_SHA} -X main.Version=${VERSION}" \
+    -tags netgo \
+    -ldflags "-extldflags=-static -X main.GitSHA=${GIT_SHA} -X main.Version=${VERSION}" \
     ./cmd/...
