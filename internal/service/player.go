@@ -984,7 +984,13 @@ func (p *Player) playerStateMachine() error {
 		err = binary.Read(br, binary.LittleEndian, &pcmBuf)
 		if err != nil {
 			if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
-				p.debug().Err(err).Msg("end of track or broken pipe")
+
+				if flushable, ok := f.(interface{ Flushed() bool }); ok && flushable.Flushed() {
+					return nil
+				}
+
+				p.debug().Err(err).Msg("file read interrupted")
+
 				return nil
 			}
 			return fmt.Errorf("error reading track: %s: %v", track.SrcUrlStr(), err)

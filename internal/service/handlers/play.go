@@ -52,7 +52,27 @@ type audioStream struct {
 	dstFilePath string
 }
 
+type flushedState struct {
+	rwm     sync.RWMutex
+	flushed bool
+}
+
+func (fs *flushedState) setFlushed() {
+	fs.rwm.Lock()
+	defer fs.rwm.Unlock()
+
+	fs.flushed = true
+}
+
+func (fs *flushedState) Flushed() bool {
+	fs.rwm.RLock()
+	defer fs.rwm.RUnlock()
+
+	return fs.flushed
+}
+
 type readCloser struct {
+	flushedState
 	read  func([]byte) (int, error)
 	close func() error
 }
@@ -88,7 +108,7 @@ func (as *audioStream) SrcUrlStr() string {
 
 func (as *audioStream) Cached() bool {
 
-	_, err := os.Stat(as.dstFilePath)
+	info, err := os.Stat(as.dstFilePath)
 	if err != nil {
 		if !os.IsNotExist(err) {
 			log.Err(err).
@@ -96,6 +116,11 @@ func (as *audioStream) Cached() bool {
 			return false
 		}
 
+		return false
+	}
+
+	if info.Size() == 0 {
+		os.Remove(as.dstFilePath)
 		return false
 	}
 
@@ -107,6 +132,7 @@ func (as *audioStream) ReadCloser(ctx context.Context, wg *sync.WaitGroup) (io.R
 	if as.Cached() {
 		log.Debug().
 			Str("url", as.srcVideoUrlStr).
+			Str("cached_file", as.dstFilePath).
 			Msg("playing from cache")
 		return os.Open(as.dstFilePath)
 	}
@@ -244,6 +270,8 @@ func (as *audioStream) ReadCloser(ctx context.Context, wg *sync.WaitGroup) (io.R
 
 				// fully wait for writer to return
 				<-ctx.Done()
+
+				result.setFlushed()
 
 				if err := os.Rename(tmpFilePath, as.dstFilePath); err != nil {
 					log.Err(err).
