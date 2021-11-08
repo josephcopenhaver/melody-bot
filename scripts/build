@@ -32,6 +32,14 @@ JOSEPHCOPENHAVER_GOPUS_GIT_SHA=17c317f9c9e9545df42c4ffc0bb9252ee6261868
 # TODO: statically compile or have release image use the shell as a base image
 
 set -x
+
+# export FFMPEG_ROOT=$HOME/ffmpeg
+# export CGO_LDFLAGS="-L$FFMPEG_ROOT/lib/ -lavcodec -lavformat -lavutil -lswscale -lswresample -lavdevice -lavfilter"
+# export CGO_CFLAGS="-I$FFMPEG_ROOT/include -O3"
+# export LD_LIBRARY_PATH=$HOME/ffmpeg/lib
+
+export CGO_CFLAGS="-O3"
+
 CGO_ENABLED=1 go build \
     -o build/bin/ \
     -tags netgo \
