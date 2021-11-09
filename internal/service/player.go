@@ -276,6 +276,11 @@ func (p *Player) nextTrack() *Track {
 
 	p.withMemory(func(m *PlayerMemory) {
 
+		if len(m.tracks) == 0 {
+			m.currentTrackIdx = -1
+			return
+		}
+
 		m.currentTrackIdx++
 
 		if m.currentTrackIdx >= len(m.tracks) {
