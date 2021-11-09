@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -233,7 +234,7 @@ func (as *audioStream) ReadCloser(ctx context.Context, wg *sync.WaitGroup) (io.R
 			return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
 		}
 
-		cmd := exec.CommandContext(ctx, "bash", "-c", "set -eo pipefail && ffmpeg -f mp4 -y -loglevel quiet -i pipe: -ar 48000 -ac 1 -vn -f s16le pipe:1 | tee "+escape(tmpFilePath))
+		cmd := exec.CommandContext(ctx, "bash", "-c", "set -eo pipefail && ffmpeg -f mp4 -y -loglevel quiet -i pipe: -ar "+strconv.Itoa(service.SampleRate)+" -ac 1 -vn -f s16le pipe:1 | tee "+escape(tmpFilePath))
 		cmd.Stdin = cr
 		bw := bufio.NewWriter(pw)
 		cmd.Stdout = bw
