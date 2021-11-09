@@ -112,17 +112,18 @@ type PlayerMemory struct {
 }
 
 func (m *PlayerMemory) reset() {
-
-	if m.voiceConnection != nil {
-		err := m.voiceConnection.Disconnect()
-		if err != nil {
-			log.Err(err).Msg("reset: failed to disconnect")
-		}
-	}
+	vc := m.voiceConnection
 
 	*m = PlayerMemory{
 		playRequests:    m.playRequests,
 		currentTrackIdx: -1,
+	}
+
+	if vc != nil {
+		err := vc.Disconnect()
+		if err != nil {
+			log.Err(err).Msg("reset: failed to disconnect")
+		}
 	}
 }
 
@@ -663,9 +664,19 @@ func (p *Player) playerGoroutine(wg *sync.WaitGroup) {
 		func() {
 			defer func() {
 				if r := recover(); r != nil {
-					log.Error().
-						Interface("error", r).
-						Str("state", p.stateMachine.state.String()).
+					prevState := p.stateMachine.state
+					p.stateMachine = PlayerStateMachine{
+						state:    StateDefault,
+						niceness: NicenessMax,
+					}
+					p.reset()
+					evt := log.Error()
+					if e, ok := r.(error); ok {
+						evt = evt.Err(e)
+					} else {
+						evt = evt.Interface("error", r)
+					}
+					evt.Str("state", prevState.String()).
 						Str("guild_id", p.discordGuildId).
 						Msg("player: recovered from panic")
 				}

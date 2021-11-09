@@ -240,7 +240,7 @@ func (as *audioStream) ReadCloser(ctx context.Context, wg *sync.WaitGroup) (io.R
 		defer bw.Flush()
 
 		if err := cmd.Run(); err != nil {
-			setErr(fmt.Errorf("stream conversion process failed: %w", err))
+			setErr(fmt.Errorf("stream conversion process failed: %s", err.Error()))
 			return
 		}
 
@@ -257,6 +257,8 @@ func (as *audioStream) ReadCloser(ctx context.Context, wg *sync.WaitGroup) (io.R
 			setErr(err)
 			return
 		}
+
+		result.setFlushed()
 	}()
 
 	result.read = func(b []byte) (int, error) {
@@ -271,7 +273,10 @@ func (as *audioStream) ReadCloser(ctx context.Context, wg *sync.WaitGroup) (io.R
 				// fully wait for writer to return
 				<-ctx.Done()
 
-				result.setFlushed()
+				// double check there was no error in the transcode activity
+				if err := getErr(); err != nil {
+					return 0, err
+				}
 
 				if err := os.Rename(tmpFilePath, as.dstFilePath); err != nil {
 					log.Err(err).
