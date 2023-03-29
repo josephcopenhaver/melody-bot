@@ -866,7 +866,7 @@ func (p *Player) playerStateMachine() error {
 		return err
 	}
 
-	pcmBuf := make([]int16, SampleSize)
+	pcmBuf := [SampleSize]int16{}
 
 	for {
 
@@ -998,8 +998,13 @@ func (p *Player) playerStateMachine() error {
 		if err != nil {
 			if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
 
-				if flushable, ok := f.(interface{ Flushed() bool }); ok && flushable.Flushed() {
-					return nil
+				if flushable, ok := f.(interface{ Flushed() bool }); ok {
+					p.debug().Msg("flushing track")
+					if flushable.Flushed() {
+						p.debug().Msg("flush: true")
+						return nil
+					}
+					p.debug().Msg("flush: false")
 				}
 
 				p.debug().Err(err).Msg("file read interrupted")
@@ -1009,14 +1014,14 @@ func (p *Player) playerStateMachine() error {
 			return fmt.Errorf("error reading track: %s: %v", track.SrcUrlStr(), err)
 		}
 
-		numBytes, err := opusEncoder.Encode(pcmBuf, SampleSize, packet)
-		if err != nil {
-			return fmt.Errorf("error encoding track to opus: %s: %v", track.SrcUrlStr(), err)
-		}
-
+		numBytes, err := opusEncoder.Encode(pcmBuf[:], SampleSize, packet)
 		if numBytes == 0 {
-			p.debug().Msg("opus encode created zero bytes")
-			return nil
+			if err == nil {
+				p.debug().Msg("opus encode created zero bytes")
+				return nil
+			}
+
+			return err
 		}
 
 		if pctx.Err() != nil {
@@ -1026,5 +1031,13 @@ func (p *Player) playerStateMachine() error {
 		// TODO: modify discordgo to support a packet pool
 
 		sendChan <- packet[:numBytes]
+
+		if pctx.Err() != nil {
+			return ErrDisposed
+		}
+
+		if err != nil {
+			return fmt.Errorf("error encoding track to opus: %s: %v", track.SrcUrlStr(), err)
+		}
 	}
 }
