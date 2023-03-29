@@ -9,7 +9,7 @@ COPY ./ ./
 RUN ./scripts/ci-build.sh \
     && true
 
-FROM debian:10.3
+FROM debian:11.6
 
 # specify a default working directory
 WORKDIR /workspace

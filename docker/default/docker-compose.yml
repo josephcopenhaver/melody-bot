@@ -2,6 +2,7 @@ version: "3.7"
 
 services:
   melody-bot:
+    platform: linux/amd64 # TODO: support aarch64 | arm
     build:
       context: $PWD
       dockerfile: $PWD/docker/default/Dockerfile

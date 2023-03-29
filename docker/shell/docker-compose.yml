@@ -2,6 +2,7 @@ version: "3.7"
 
 services:
   shell:
+    platform: linux/amd64 # TODO: support aarch64 | arm
     tty: true
     stdin_open: true
     build:

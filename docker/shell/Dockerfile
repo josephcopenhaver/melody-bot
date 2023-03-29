@@ -1,4 +1,4 @@
-ARG DOCKER_GO_VERSION=1.17.2-buster
+ARG DOCKER_GO_VERSION=1.20.2-bullseye
 
 FROM golang:${DOCKER_GO_VERSION}
 
@@ -49,14 +49,26 @@ RUN export DEBIAN_FRONTEND=noninteractive \
 RUN export DEBIAN_FRONTEND=noninteractive \
     && apt-get update \
     && apt-get install -y \
-    python \
-    python-pip \
-    python-wheel \
+    unzip \
+    python3 \
+    python3-pip \
+    python3-wheel \
     && rm -rf /var/lib/apt/lists/* \
-    && pip install \
-    awscli \
+    && pip3 install \
     cfn-lint \
     yq \
+    && ( \
+        rm -rf /tmp/awscli \
+        && mkdir -p /tmp/awscli \
+        && curl -fsSL "https://awscli.amazonaws.com/awscli-exe-linux-$(uname -m).zip" -o "/tmp/awscli/awscliv2.zip" \
+        && cd /tmp/awscli \
+        && unzip awscliv2.zip \
+        && ./aws/install \
+        && aws --help \
+        && cd /tmp \
+        && rm -rf awscli \
+        true \
+    ) \
     && true
 
 # setup bash completions
