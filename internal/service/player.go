@@ -53,8 +53,9 @@ func (s Signal) String() string {
 }
 
 type TracedSignal struct {
-	src interface{}
-	sig Signal
+	src           interface{}
+	sig           Signal
+	signalPayload interface{}
 }
 
 type State int8
@@ -108,14 +109,12 @@ type PlayerMemory struct {
 	currentTrackIdx int
 	textChannel     string
 	tracks          []Track
-	playRequests    chan *playRequest
 }
 
 func (m *PlayerMemory) reset() {
 	vc := m.voiceConnection
 
 	*m = PlayerMemory{
-		playRequests:    m.playRequests,
 		currentTrackIdx: -1,
 	}
 
@@ -138,18 +137,21 @@ func (m *PlayerMemory) indexOfTrack(url string) int {
 	return -1
 }
 
-func (m *PlayerMemory) play(s State) {
+func (m *PlayerMemory) play(s State, r *playRequest, debug func() *zerolog.Event) {
 
-	r := <-m.playRequests
+	if r == nil {
+		debug().Msg("no playRequest in play handler?")
+		return
+	}
 
 	if r.track == nil {
-		log.Debug().Msg("no track in play handler?")
+		debug().Msg("no track in play handler?")
 		return
 	}
 
 	t := *r.track
 
-	log.Debug().
+	debug().
 		Str("state", s.String()).
 		Int("current_track_idx", m.currentTrackIdx).
 		Int("num_tracks", len(m.tracks)).
@@ -168,10 +170,7 @@ func (m *PlayerMemory) play(s State) {
 		}
 		// TODO: else if already in track list, then consider moving track to end or moving the currentTrackIdx
 	case StatePaused:
-		i := m.indexOfTrack(t.SrcUrlStr())
-		if i == -1 {
-			m.tracks = append(m.tracks, t)
-		}
+		fallthrough
 	case StatePlaying:
 		i := m.indexOfTrack(t.SrcUrlStr())
 		if i == -1 {
@@ -254,10 +253,7 @@ func NewPlayer(ctx context.Context, wg *sync.WaitGroup, s *discordgo.Session, gu
 		},
 	}
 
-	playRequests := make(chan *playRequest, 1)
-
 	p.memory.Store(PlayerMemory{
-		playRequests:    playRequests,
 		currentTrackIdx: -1,
 	})
 
@@ -277,6 +273,7 @@ func (p *Player) nextTrack() *Track {
 	p.withMemory(func(m *PlayerMemory) {
 
 		if len(m.tracks) == 0 {
+			p.debug().Msg("next track called when there is no track list: playback stopping")
 			m.currentTrackIdx = -1
 			return
 		}
@@ -338,7 +335,7 @@ func (p *Player) withMemory(f func(m *PlayerMemory)) {
 
 func (p *Player) Reset(srcEvt interface{}) {
 
-	p.signalChan <- TracedSignal{srcEvt, SignalReset}
+	p.signalChan <- TracedSignal{srcEvt, SignalReset, nil}
 }
 
 func (p *Player) reset() {
@@ -379,27 +376,27 @@ func (p *Player) previousTrack(offset int) {
 
 func (p *Player) Pause(srcEvt interface{}) {
 
-	p.signalChan <- TracedSignal{srcEvt, SignalPause}
+	p.signalChan <- TracedSignal{srcEvt, SignalPause, nil}
 }
 
 func (p *Player) Stop(srcEvt interface{}) {
 
-	p.signalChan <- TracedSignal{srcEvt, SignalStop}
+	p.signalChan <- TracedSignal{srcEvt, SignalStop, nil}
 }
 
 func (p *Player) Resume(srcEvt interface{}) {
 
-	p.signalChan <- TracedSignal{srcEvt, SignalResume}
+	p.signalChan <- TracedSignal{srcEvt, SignalResume, nil}
 }
 
 func (p *Player) Next(srcEvt interface{}) {
 
-	p.signalChan <- TracedSignal{srcEvt, SignalNext}
+	p.signalChan <- TracedSignal{srcEvt, SignalNext, nil}
 }
 
 func (p *Player) Previous(srcEvt interface{}) {
 
-	p.signalChan <- TracedSignal{srcEvt, SignalPrevious}
+	p.signalChan <- TracedSignal{srcEvt, SignalPrevious, nil}
 }
 
 func (p *Player) CycleRepeatMode(srcEvt interface{}) string {
@@ -419,17 +416,17 @@ func (p *Player) CycleRepeatMode(srcEvt interface{}) string {
 }
 
 func (p *Player) Play(srcEvt interface{}, authorId, authorMention string, as AudioStreamer) {
+	// TODO: pool
+	payload := &playRequest{
+		track: &Track{
+			AudioStreamer: as,
+			AuthorId:      authorId,
+			AuthorMention: authorMention,
+		},
+	}
+
 	p.withMemory(func(m *PlayerMemory) {
-
-		m.playRequests <- &playRequest{
-			track: &Track{
-				AudioStreamer: as,
-				AuthorId:      authorId,
-				AuthorMention: authorMention,
-			},
-		}
-
-		p.signalChan <- TracedSignal{srcEvt, SignalPlay}
+		p.signalChan <- TracedSignal{srcEvt, SignalPlay, payload}
 
 	})
 }
@@ -449,7 +446,7 @@ func (p *Player) SetVoiceConnection(srcEvt interface{}, channelId string, c *dis
 		m.voiceConnection = c
 	})
 
-	p.signalChan <- TracedSignal{srcEvt, SignalNewVoiceConnection}
+	p.signalChan <- TracedSignal{srcEvt, SignalNewVoiceConnection, nil}
 }
 
 func (p *Player) ClearPlaylist(srcEvt interface{}) {
@@ -462,7 +459,7 @@ func (p *Player) ClearPlaylist(srcEvt interface{}) {
 
 func (p *Player) RestartTrack(srcEvt interface{}) {
 
-	p.signalChan <- TracedSignal{srcEvt, SignalRestartTrack}
+	p.signalChan <- TracedSignal{srcEvt, SignalRestartTrack, nil}
 }
 
 func (p *Player) SetTextChannel(s string) {
@@ -660,7 +657,7 @@ func (p *Player) playerGoroutine(wg *sync.WaitGroup) {
 	doneChan := p.ctx.Done()
 	go func() {
 		<-doneChan
-		p.signalChan <- TracedSignal{nil, SignalDispose}
+		p.signalChan <- TracedSignal{nil, SignalDispose, nil}
 	}()
 
 	var done bool
@@ -742,7 +739,7 @@ func (p *Player) playerStateMachine() error {
 			hasAudience := false
 
 			p.withMemory(func(m *PlayerMemory) {
-				m.play(p.stateMachine.state)
+				m.play(p.stateMachine.state, s.signalPayload.(*playRequest), p.debug)
 				hasAudience = m.hasAudience(p.discordSession, p.discordGuildId)
 			})
 
@@ -782,7 +779,7 @@ func (p *Player) playerStateMachine() error {
 			hasAudience := false
 
 			p.withMemory(func(m *PlayerMemory) {
-				m.play(p.stateMachine.state)
+				m.play(p.stateMachine.state, s.signalPayload.(*playRequest), p.debug)
 				hasAudience = m.hasAudience(p.discordSession, p.discordGuildId)
 			})
 
@@ -894,7 +891,7 @@ func (p *Player) playerStateMachine() error {
 				}
 			case SignalPlay:
 				p.withMemory(func(m *PlayerMemory) {
-					m.play(p.stateMachine.state)
+					m.play(p.stateMachine.state, s.signalPayload.(*playRequest), p.debug)
 				})
 			case SignalPrevious:
 				p.previousTrack(1) // current track is playing
@@ -936,7 +933,7 @@ func (p *Player) playerStateMachine() error {
 						sendChan = nil
 					case SignalPlay:
 						p.withMemory(func(m *PlayerMemory) {
-							m.play(p.stateMachine.state)
+							m.play(p.stateMachine.state, s.signalPayload.(*playRequest), p.debug)
 						})
 
 						broadcastMsg := "player is paused; to resume playback send the following message:\n\n" +
