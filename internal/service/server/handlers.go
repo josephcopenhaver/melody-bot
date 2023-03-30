@@ -47,6 +47,8 @@ func (s *Server) Handlers() error {
 
 	s.AddHandler(handlers.RemoveTrack())
 
+	s.AddHandler(handlers.ClearCache())
+
 	s.DiscordSession.AddHandler(func(session *discordgo.Session, evt *discordgo.VoiceStateUpdate) {
 		// https://discord.com/developers/docs/topics/gateway#voice-state-update
 		// Sent when someone joins/leaves/moves voice channels. Inner payload is a voice state object.
@@ -274,7 +276,7 @@ func (srv *Server) addMuxHandlers() {
 				continue
 			}
 
-			err := handler(srv.ctx, s, m, p)
+			err := handler(srv.ctx, s, m, p, srv.Brain)
 			if err != nil {
 				log.Err(err).
 					Str("handler_name", h.Name).

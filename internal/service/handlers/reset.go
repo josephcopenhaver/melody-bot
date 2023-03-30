@@ -16,7 +16,7 @@ func Reset() HandleMessageCreate {
 		newWordMatcher(
 			true,
 			[]string{"reset"},
-			func(_ context.Context, s *discordgo.Session, m *discordgo.MessageCreate, p *service.Player, _ map[string]string) error {
+			func(_ context.Context, s *discordgo.Session, m *discordgo.MessageCreate, p *service.Player) error {
 
 				p.Reset(m)
 

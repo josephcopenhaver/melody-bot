@@ -25,7 +25,7 @@ import (
 )
 
 const (
-	AudioFileName = "audio.s16le"
+	MediaCacheDir = ".media-cache/v1"
 )
 
 // TODO: handle voice channel reconnects forced by the server, specifically when forced into a channel where no one is present
@@ -169,7 +169,13 @@ func (as *audioStream) ReadCloser(ctx context.Context, wg *sync.WaitGroup) (io.R
 		return errResp.err
 	}
 
-	tmpF, err := ioutil.TempFile(path.Dir(as.dstFilePath), "melody-bot.*.audio.s16le.tmp")
+	cacheDir := path.Dir(as.dstFilePath)
+
+	if err := os.MkdirAll(cacheDir, os.ModePerm); err != nil {
+		return nil, fmt.Errorf("failed to make cache directory: %s: %v", cacheDir, err)
+	}
+
+	tmpF, err := ioutil.TempFile(cacheDir, "melody-bot.*.audio.s16le.tmp")
 	if err != nil {
 		return nil, err
 	}
@@ -342,12 +348,8 @@ func playAfterTranscode(ctx context.Context, s *discordgo.Session, m *discordgo.
 		return err
 	}
 
-	cacheDir := path.Join(".media-cache", "v1", ytVid.ID)
+	cacheDir := path.Join(MediaCacheDir, ytVid.ID)
 	cachedRef := path.Join(cacheDir, "audio.s16le")
-
-	if err := os.MkdirAll(cacheDir, os.ModePerm); err != nil {
-		return fmt.Errorf("failed to make cache directory: %s: %v", cacheDir, err)
-	}
 
 	as := &audioStream{
 		srcVideoUrlStr: urlStr,
