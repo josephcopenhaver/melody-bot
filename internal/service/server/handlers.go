@@ -252,9 +252,9 @@ func (srv *Server) addMuxHandlers() {
 
 			// get message without @bot directive
 			{
-				withoutMetion := trimMsg[len(prefix):]
-				newTrimMsg := strings.TrimSpace(withoutMetion)
-				if newTrimMsg == withoutMetion {
+				withoutMention := trimMsg[len(prefix):]
+				newTrimMsg := strings.TrimSpace(withoutMention)
+				if newTrimMsg == withoutMention {
 					// log.Debug().
 					// 	Str("channel_message", trimMsg).
 					// 	Msg("not well formed for me")

@@ -591,31 +591,35 @@ func (p *Player) broadcastTextMessage(s string) {
 }
 
 func (p *Player) sendChannel() chan<- []byte {
-	var c *discordgo.VoiceConnection
+	var vc *discordgo.VoiceConnection
 	var result chan<- []byte
 
 	p.withMemory(func(m *PlayerMemory) {
-		c = m.voiceConnection
+		vc = m.voiceConnection
 	})
 
-	if c == nil {
+	if vc == nil {
 		p.broadcastTextMessage("no active voice channel")
 		return result
 	}
 
-	c.Lock()
-	defer c.Unlock()
+	sendChan, ok := func() (chan<- []byte, bool) {
+		vc.RLock()
+		defer vc.RUnlock()
 
-	if !c.Ready {
+		return vc.OpusSend, vc.Ready
+	}()
+
+	if !ok {
 		p.broadcastTextMessage("voice channel not ready")
 		return result
 	}
 
-	result = c.OpusSend
-
-	if result == nil {
+	if sendChan == nil {
 		p.broadcastTextMessage("voice channel has no sender")
 	}
+
+	result = sendChan
 
 	return result
 }
