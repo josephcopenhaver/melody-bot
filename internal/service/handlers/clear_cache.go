@@ -12,6 +12,9 @@ import (
 
 func ClearCache() HandleMessageCreate {
 
+	// TODO: something about stop calls does not clear the download state fully
+	// playlist tracks get reset because the tracks error too much
+
 	return newHandleMessageCreateWithBrain(
 		"clearcache",
 		"clearcache",

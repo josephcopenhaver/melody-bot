@@ -9,6 +9,14 @@ mkdir -p build/bin
 
 go mod vendor
 
+if [ -e vendor/github.com/josephcopenhaver/gopus/.git ]; then
+    # the above vendor command removes the gopus C'linked dependency
+    #
+    # lets make sure that's a consistent goal
+    echo "vendor/github.com/josephcopenhaver/gopus/.git should not exist!"
+    exit 1
+fi
+
 # TODO: wow, does not appear to be a better way atm
 # just conna hack it
 # ref: https://github.com/golang/go/issues/26366
@@ -18,14 +26,22 @@ JOSEPHCOPENHAVER_GOPUS_GIT_SHA=17c317f9c9e9545df42c4ffc0bb9252ee6261868
 (
     set -eo pipefail
 
-    # note this currently reruns each time because go mod vendor blows away the .git dir and other files
+    if [ ! -d vendor/github.com/josephcopenhaver/gopus ] || [ ! -d vendor/github.com/josephcopenhaver/gopus/.git ] || [[ "$(cd gopus && git log -1 --format=%H)" != "$JOSEPHCOPENHAVER_GOPUS_GIT_SHA" ]]; then
+        mkdir -p vendor-ext/github.com/josephcopenhaver
+        cd vendor-ext/github.com/josephcopenhaver
+        if [ ! -d gopus ] || [ ! -d gopus/.git ] || [[ "$(cd gopus && git log -1 --format=%H)" != "$JOSEPHCOPENHAVER_GOPUS_GIT_SHA" ]]; then
+            rm -rf gopus
+            git clone https://github.com/josephcopenhaver/gopus.git
+            cd gopus
+            git reset --hard "$JOSEPHCOPENHAVER_GOPUS_GIT_SHA"
+            cd ..
+        fi
 
-    pushd vendor/github.com/josephcopenhaver
-    if [ ! -d gopus ] || [ ! -d gopus/.git ] || [[ "$(cd gopus && git log -1 --format=%H)" != "$JOSEPHCOPENHAVER_GOPUS_GIT_SHA" ]]; then
-        rm -rf gopus
-        git clone https://github.com/josephcopenhaver/gopus.git
-        cd gopus
-        git reset --hard "$JOSEPHCOPENHAVER_GOPUS_GIT_SHA"
+        echo ""
+        echo "rsync'ing vendor-ext/github.com/josephcopenhaver/gopus"
+        echo ""
+
+        rsync -an --delete gopus ../vendor/github.com/josephcopenhaver/gopus
     fi
 )
 
