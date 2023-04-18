@@ -453,16 +453,6 @@ func (p *Player) SetVoiceConnection(srcEvt interface{}, channelId string, c *dis
 	p.signalChan <- TracedSignal{srcEvt, SignalNewVoiceConnection, nil}
 }
 
-func (p *Player) ClearPlaylist(srcEvt interface{}) {
-
-	p.Stop(srcEvt)
-
-	p.withMemory(func(m *PlayerMemory) {
-
-		m.tracks = nil
-	})
-}
-
 func (p *Player) RestartTrack(srcEvt interface{}) {
 
 	p.signalChan <- TracedSignal{srcEvt, SignalRestartTrack, nil}

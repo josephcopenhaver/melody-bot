@@ -12,7 +12,7 @@ func Reset() HandleMessageCreate {
 	return newHandleMessageCreate(
 		"reset",
 		"reset",
-		"resets player state back to defaults",
+		"resets player state back to defaults: stops playback and clears the playlist",
 		newWordMatcher(
 			true,
 			[]string{"reset"},
