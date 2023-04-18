@@ -228,8 +228,7 @@ func (m *PlayerMemory) hasAudience(s *discordgo.Session, guildId string) bool {
 }
 
 type PlayerStateMachine struct {
-	state    State
-	niceness int
+	state State
 }
 
 type Player struct {
@@ -253,8 +252,7 @@ func NewPlayer(ctx context.Context, wg *sync.WaitGroup, s *discordgo.Session, gu
 		discordGuildId: guildId,
 		signalChan:     make(chan TracedSignal, 1),
 		stateMachine: PlayerStateMachine{
-			state:    StateDefault,
-			niceness: NicenessMax,
+			state: StateDefault,
 		},
 	}
 
@@ -637,23 +635,6 @@ func (p *Player) debug() *zerolog.Event {
 		Str("guild_id", p.discordGuildId)
 }
 
-func (p *Player) setNiceness(n int) error {
-
-	if p.stateMachine.niceness == n {
-
-		return nil
-	}
-
-	err := SetNiceness(n)
-	if err != nil {
-		return err
-	}
-
-	p.stateMachine.niceness = n
-
-	return nil
-}
-
 func (p *Player) playerGoroutine(wg *sync.WaitGroup) {
 	defer wg.Done()
 
@@ -679,8 +660,7 @@ func (p *Player) playerGoroutine(wg *sync.WaitGroup) {
 				if r := recover(); r != nil {
 					prevState := p.stateMachine.state
 					p.stateMachine = PlayerStateMachine{
-						state:    StateDefault,
-						niceness: NicenessMax,
+						state: StateDefault,
 					}
 					p.reset()
 					evt := log.Error()
@@ -763,10 +743,6 @@ func (p *Player) playerStateMachine() error {
 			p.stateMachine.state = StatePlaying
 		}
 	case StateIdle:
-		err = p.setNiceness(NicenessMax)
-		if err != nil {
-			return err
-		}
 
 		// signal trap 2/4:
 		// type: blocking
@@ -847,11 +823,6 @@ func (p *Player) playerStateMachine() error {
 		p.broadcastTextMessage(msg)
 	}
 
-	err = p.setNiceness(NicenessNormal)
-	if err != nil {
-		return err
-	}
-
 	pctx := p.ctx
 	if pctx.Err() != nil {
 		return nil
@@ -923,11 +894,6 @@ func (p *Player) playerStateMachine() error {
 			case SignalPause:
 				p.stateMachine.state = StatePaused
 
-				err = p.setNiceness(NicenessMax)
-				if err != nil {
-					return err
-				}
-
 			PausedLoop:
 				for {
 					// signal trap 4/4:
@@ -974,11 +940,6 @@ func (p *Player) playerStateMachine() error {
 						p.stateMachine.state = StatePlaying
 						break PausedLoop
 					}
-				}
-
-				err = p.setNiceness(NicenessNormal)
-				if err != nil {
-					return err
 				}
 
 				// rediscover the channel we need to send on

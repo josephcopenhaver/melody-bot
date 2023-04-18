@@ -94,16 +94,6 @@ func main() {
 			Msg("failed to register handlers")
 	}
 
-	service.NicenessInit()
-
-	// set process niceness as high as possible until sending rtp traffic
-	err = service.SetNiceness(service.NicenessMax)
-	if err != nil {
-		log.Panic().
-			Err(err).
-			Msg("failed to set process niceness higher")
-	}
-
 	log.Info().
 		Msg("starting listener")
 
