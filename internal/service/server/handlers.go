@@ -292,6 +292,18 @@ func (srv *Server) addMuxHandlers() {
 
 		ctx := logger.WithContext(srv.ctx)
 
+		err = s.MessageReactionAdd(m.ChannelID, m.ID, ReactionStatusThinking)
+		if err != nil {
+			logger.Err(err).Msg("failed to react with thinking")
+		} else {
+			defer func() {
+				err := s.MessageReactionRemove(m.ChannelID, m.ID, ReactionStatusThinking, "@me")
+				if err != nil {
+					logger.Err(err).Msg("failed to remove thinking reaction")
+				}
+			}()
+		}
+
 		var reaction string
 		defer func() {
 			if reaction == "" {
