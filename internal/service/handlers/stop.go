@@ -16,7 +16,7 @@ func Stop() HandleMessageCreate {
 		newWordMatcher(
 			true,
 			[]string{"stop"},
-			func(_ context.Context, s *discordgo.Session, m *discordgo.MessageCreate, p *service.Player, _ map[string]string) error {
+			func(_ context.Context, s *discordgo.Session, m *discordgo.MessageCreate, p *service.Player) error {
 
 				p.Stop(m)
 

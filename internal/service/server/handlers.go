@@ -6,6 +6,7 @@ import (
 	"github.com/bwmarrin/discordgo"
 	"github.com/josephcopenhaver/melody-bot/internal/service"
 	"github.com/josephcopenhaver/melody-bot/internal/service/handlers"
+	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 )
 
@@ -47,6 +48,8 @@ func (s *Server) Handlers() error {
 
 	s.AddHandler(handlers.RemoveTrack())
 
+	s.AddHandler(handlers.ClearCache())
+
 	s.DiscordSession.AddHandler(func(session *discordgo.Session, evt *discordgo.VoiceStateUpdate) {
 		// https://discord.com/developers/docs/topics/gateway#voice-state-update
 		// Sent when someone joins/leaves/moves voice channels. Inner payload is a voice state object.
@@ -60,6 +63,11 @@ func (s *Server) Handlers() error {
 
 		// if not a destructive event then short circuit
 		if evt.VoiceState == nil || evt.VoiceState.GuildID == "" || evt.VoiceState.ChannelID == "" {
+			return
+		}
+
+		// if the event spawner is the bot, short circuit
+		if evt.Member != nil && evt.Member.User != nil && evt.Member.User.ID == s.DiscordSession.State.User.ID {
 			return
 		}
 
@@ -252,9 +260,9 @@ func (srv *Server) addMuxHandlers() {
 
 			// get message without @bot directive
 			{
-				withoutMetion := trimMsg[len(prefix):]
-				newTrimMsg := strings.TrimSpace(withoutMetion)
-				if newTrimMsg == withoutMetion {
+				withoutMention := trimMsg[len(prefix):]
+				newTrimMsg := strings.TrimSpace(withoutMention)
+				if newTrimMsg == withoutMention {
 					// log.Debug().
 					// 	Str("channel_message", trimMsg).
 					// 	Msg("not well formed for me")
@@ -265,6 +273,60 @@ func (srv *Server) addMuxHandlers() {
 			}
 		}
 
+		logger := log.Level(zerolog.DebugLevel)
+		{
+			lc := logger.With().
+				Str("guild_id", m.GuildID).
+				Str("channel_id", m.ChannelID).
+				Str("message_id", m.Message.ID).
+				Time("message_timestamp", m.Timestamp).
+				Str("author_id", m.Author.ID).
+				Str("author_username", m.Author.Username)
+
+			if m.EditedTimestamp != nil {
+				lc = lc.Time("last_edited_at", *m.EditedTimestamp)
+			}
+
+			logger = lc.Logger()
+		}
+
+		ctx := logger.WithContext(srv.ctx)
+
+		err = s.MessageReactionAdd(m.ChannelID, m.ID, ReactionStatusThinking)
+		if err != nil {
+			logger.Err(err).Msg("failed to react with thinking")
+		} else {
+			defer func() {
+				err := s.MessageReactionRemove(m.ChannelID, m.ID, ReactionStatusThinking, "@me")
+				if err != nil {
+					logger.Err(err).Msg("failed to remove thinking reaction")
+				}
+			}()
+		}
+
+		var reaction string
+		defer func() {
+			if reaction == "" {
+				return
+			}
+
+			defer func() {
+				if r := recover(); r != nil {
+					var err error
+					if v, ok := r.(error); ok {
+						err = v
+					}
+
+					logger.Error().Err(err).Msg("panicked trying to react")
+				}
+			}()
+
+			err := s.MessageReactionAdd(m.ChannelID, m.ID, reaction)
+			if err != nil {
+				logger.Err(err).Msg("failed to react")
+			}
+		}()
+
 		for i := range srv.EventHandlers.MessageCreate {
 
 			h := &srv.EventHandlers.MessageCreate[i]
@@ -274,26 +336,26 @@ func (srv *Server) addMuxHandlers() {
 				continue
 			}
 
-			err := handler(srv.ctx, s, m, p)
+			err := handler(ctx, s, m, p, srv.Brain)
 			if err != nil {
-				log.Err(err).
+				reaction = ReactionStatusErr
+
+				logger.Err(err).
 					Str("handler_name", h.Name).
-					Str("author_id", m.Author.ID).
-					Str("author_username", m.Author.Username).
 					Str("message_content", m.Message.Content).
-					Interface("message_id", m.Message.ID).
-					Interface("message_timestamp", m.Message.Timestamp).
 					Msg("error in handler")
 
 				_, err := s.ChannelMessageSend(m.ChannelID, "error: "+err.Error())
 				if err != nil {
-					log.Err(err).
+					logger.Err(err).
 						Msg("failed to send error reply")
 				}
 				return
 			}
 
-			// log.Info().
+			reaction = ReactionStatusOK
+
+			// logger.Info().
 			// 	Str("handler_name", h.Name).
 			// 	Str("author_id", m.Author.ID).
 			// 	Str("author_username", m.Author.Username).
@@ -301,10 +363,13 @@ func (srv *Server) addMuxHandlers() {
 			// 	Interface("message_id", m.Message.ID).
 			// 	Interface("message_timestamp", m.Message.Timestamp).
 			// 	Msg("handled message")
+
 			return
 		}
 
-		// log.Debug().
+		reaction = ReactionStatusWarning
+
+		// logger.Debug().
 		// 	Str("author_id", m.Author.ID).
 		// 	Str("author_username", m.Author.Username).
 		// 	Str("message_content", m.Message.Content).
@@ -314,8 +379,7 @@ func (srv *Server) addMuxHandlers() {
 
 		_, err = s.ChannelMessageSend(m.ChannelID, "command not recognized")
 		if err != nil {
-			log.Error().
-				Err(err).
+			logger.Err(err).
 				Msg("failed to send default reply")
 		}
 	})

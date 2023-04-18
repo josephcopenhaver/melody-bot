@@ -169,9 +169,7 @@ func (m *PlayerMemory) play(s State, r *playRequest, debug func() *zerolog.Event
 			m.currentTrackIdx = len(m.tracks) - 1
 		}
 		// TODO: else if already in track list, then consider moving track to end or moving the currentTrackIdx
-	case StatePaused:
-		fallthrough
-	case StatePlaying:
+	case StatePaused, StatePlaying:
 		i := m.indexOfTrack(t.SrcUrlStr())
 		if i == -1 {
 			m.tracks = append(m.tracks, t)
@@ -179,15 +177,17 @@ func (m *PlayerMemory) play(s State, r *playRequest, debug func() *zerolog.Event
 	}
 }
 
+// hasAudience is broken in latest release of discord-go
 func (m *PlayerMemory) hasAudience(s *discordgo.Session, guildId string) bool {
 
 	if m.voiceChannelId == "" {
+		log.Error().Msg("player: no voice channel id set, assuming no audience")
 		return false
 	}
 
 	g, err := s.State.Guild(guildId)
 	if err != nil || g == nil {
-		log.Err(err).Msg("player: hasAudience: failed to get guild voice states")
+		log.Err(err).Msg("player: hasAudience: failed to get guild voice states, assuming no audience")
 		return false
 	}
 
@@ -219,12 +219,16 @@ func (m *PlayerMemory) hasAudience(s *discordgo.Session, guildId string) bool {
 		return true
 	}
 
+	log.Error().
+		Int("voice_state_count", len(g.VoiceStates)).
+		Str("guild_id", guildId).
+		Msg("player: found no human voice states")
+
 	return false
 }
 
 type PlayerStateMachine struct {
-	state    State
-	niceness int
+	state State
 }
 
 type Player struct {
@@ -248,8 +252,7 @@ func NewPlayer(ctx context.Context, wg *sync.WaitGroup, s *discordgo.Session, gu
 		discordGuildId: guildId,
 		signalChan:     make(chan TracedSignal, 1),
 		stateMachine: PlayerStateMachine{
-			state:    StateDefault,
-			niceness: NicenessMax,
+			state: StateDefault,
 		},
 	}
 
@@ -314,6 +317,7 @@ func (p *Player) withMemoryErr(f func(m *PlayerMemory) error) error {
 
 	err := f(&m)
 	if err != nil {
+		log.Err(err).Msg("error interacting with player memory")
 		return err
 	}
 
@@ -449,14 +453,6 @@ func (p *Player) SetVoiceConnection(srcEvt interface{}, channelId string, c *dis
 	p.signalChan <- TracedSignal{srcEvt, SignalNewVoiceConnection, nil}
 }
 
-func (p *Player) ClearPlaylist(srcEvt interface{}) {
-
-	p.withMemory(func(m *PlayerMemory) {
-
-		m.tracks = nil
-	})
-}
-
 func (p *Player) RestartTrack(srcEvt interface{}) {
 
 	p.signalChan <- TracedSignal{srcEvt, SignalRestartTrack, nil}
@@ -578,7 +574,6 @@ func (p *Player) broadcastTextMessage(s string) {
 	}
 
 	p.debug().
-		Str("guild_id", p.discordGuildId).
 		Str("notification_message", s).
 		Msg("broadcasting notification")
 
@@ -591,31 +586,35 @@ func (p *Player) broadcastTextMessage(s string) {
 }
 
 func (p *Player) sendChannel() chan<- []byte {
-	var c *discordgo.VoiceConnection
+	var vc *discordgo.VoiceConnection
 	var result chan<- []byte
 
 	p.withMemory(func(m *PlayerMemory) {
-		c = m.voiceConnection
+		vc = m.voiceConnection
 	})
 
-	if c == nil {
+	if vc == nil {
 		p.broadcastTextMessage("no active voice channel")
 		return result
 	}
 
-	c.Lock()
-	defer c.Unlock()
+	sendChan, ok := func() (chan<- []byte, bool) {
+		vc.RLock()
+		defer vc.RUnlock()
 
-	if !c.Ready {
+		return vc.OpusSend, vc.Ready
+	}()
+
+	if !ok {
 		p.broadcastTextMessage("voice channel not ready")
 		return result
 	}
 
-	result = c.OpusSend
-
-	if result == nil {
+	if sendChan == nil {
 		p.broadcastTextMessage("voice channel has no sender")
 	}
+
+	result = sendChan
 
 	return result
 }
@@ -624,23 +623,6 @@ func (p *Player) debug() *zerolog.Event {
 	return log.Debug().
 		Str("state", p.stateMachine.state.String()).
 		Str("guild_id", p.discordGuildId)
-}
-
-func (p *Player) setNiceness(n int) error {
-
-	if p.stateMachine.niceness == n {
-
-		return nil
-	}
-
-	err := SetNiceness(n)
-	if err != nil {
-		return err
-	}
-
-	p.stateMachine.niceness = n
-
-	return nil
 }
 
 func (p *Player) playerGoroutine(wg *sync.WaitGroup) {
@@ -668,8 +650,7 @@ func (p *Player) playerGoroutine(wg *sync.WaitGroup) {
 				if r := recover(); r != nil {
 					prevState := p.stateMachine.state
 					p.stateMachine = PlayerStateMachine{
-						state:    StateDefault,
-						niceness: NicenessMax,
+						state: StateDefault,
 					}
 					p.reset()
 					evt := log.Error()
@@ -752,10 +733,6 @@ func (p *Player) playerStateMachine() error {
 			p.stateMachine.state = StatePlaying
 		}
 	case StateIdle:
-		err = p.setNiceness(NicenessMax)
-		if err != nil {
-			return err
-		}
 
 		// signal trap 2/4:
 		// type: blocking
@@ -836,11 +813,6 @@ func (p *Player) playerStateMachine() error {
 		p.broadcastTextMessage(msg)
 	}
 
-	err = p.setNiceness(NicenessNormal)
-	if err != nil {
-		return err
-	}
-
 	pctx := p.ctx
 	if pctx.Err() != nil {
 		return nil
@@ -912,11 +884,6 @@ func (p *Player) playerStateMachine() error {
 			case SignalPause:
 				p.stateMachine.state = StatePaused
 
-				err = p.setNiceness(NicenessMax)
-				if err != nil {
-					return err
-				}
-
 			PausedLoop:
 				for {
 					// signal trap 4/4:
@@ -963,11 +930,6 @@ func (p *Player) playerStateMachine() error {
 						p.stateMachine.state = StatePlaying
 						break PausedLoop
 					}
-				}
-
-				err = p.setNiceness(NicenessNormal)
-				if err != nil {
-					return err
 				}
 
 				// rediscover the channel we need to send on

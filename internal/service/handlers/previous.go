@@ -16,7 +16,7 @@ func Previous() HandleMessageCreate {
 		newWordMatcher(
 			true,
 			[]string{"previous", "prev"},
-			func(_ context.Context, s *discordgo.Session, m *discordgo.MessageCreate, p *service.Player, _ map[string]string) error {
+			func(_ context.Context, s *discordgo.Session, m *discordgo.MessageCreate, p *service.Player) error {
 
 				p.Previous(m)
 

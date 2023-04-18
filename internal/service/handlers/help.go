@@ -19,7 +19,7 @@ func Help(inputHandlers []HandleMessageCreate) HandleMessageCreate {
 		newWordMatcher(
 			false,
 			[]string{"help"},
-			func(_ context.Context, s *discordgo.Session, m *discordgo.MessageCreate, _ *service.Player, _ map[string]string) error {
+			func(_ context.Context, s *discordgo.Session, m *discordgo.MessageCreate, _ *service.Player) error {
 
 				userTxtChan, err := s.UserChannelCreate(m.Author.ID)
 				if err != nil {

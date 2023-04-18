@@ -1,5 +1,6 @@
 # language dependencies
 /vendor
+/vendor-ext
 # application mounts
 /.docker-volumes
 # ide cache mounts

@@ -16,7 +16,7 @@ func Ping() HandleMessageCreate {
 		newWordMatcher(
 			false,
 			[]string{"ping"},
-			func(_ context.Context, s *discordgo.Session, m *discordgo.MessageCreate, _ *service.Player, _ map[string]string) error {
+			func(_ context.Context, s *discordgo.Session, m *discordgo.MessageCreate, _ *service.Player) error {
 
 				_, err := s.ChannelMessageSend(m.ChannelID, "pong")
 				return err
