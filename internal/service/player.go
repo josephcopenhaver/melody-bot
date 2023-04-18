@@ -960,9 +960,13 @@ func (p *Player) playerStateMachine() error {
 		if err != nil {
 			if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
 
-				// only log that file read was interrupted if the source file read was incompletely flushed
-				if flushable, ok := f.(interface{ Flushed() bool }); ok && flushable.Flushed() {
-					return nil
+				if flushable, ok := f.(interface{ Flushed() bool }); ok {
+					p.debug().Msg("flushing track")
+					if flushable.Flushed() {
+						p.debug().Msg("flush: true")
+						return nil
+					}
+					p.debug().Msg("flush: false")
 				}
 
 				p.debug().Err(err).Msg("file read interrupted")
