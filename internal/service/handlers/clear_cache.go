@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"os"
+	"regexp"
 	"time"
 
 	"github.com/bwmarrin/discordgo"
@@ -16,27 +17,25 @@ func ClearCache() HandleMessageCreate {
 	// playlist tracks get reset because the tracks error too much
 
 	return newHandleMessageCreateWithBrain(
-		"clearcache",
-		"clearcache",
+		"clear cache",
+		"clear cache",
 		"stops all players and clears files in the audio cache",
-		newWordMatcherWithBrain(
+		newRegexMatcherWithBrain(
 			false,
-			[]string{"clearcache"},
-			func(_ context.Context, s *discordgo.Session, m *discordgo.MessageCreate, _ *service.Player, b *service.Brain) error {
-
-				err := b.StopAllPlayers(m)
-				if err != nil {
-					return err
-				}
-
-				time.Sleep(time.Second) // TODO: refactor to remove this, remove all should be done in a protected context
-
-				return os.RemoveAll(MediaCacheDir)
-			},
+			regexp.MustCompile(`^\s*clear(?:-|\s+)cache\s*$`),
+			clearCache,
 		),
 	)
 }
 
-func clearCache(ctx context.Context, s *discordgo.Session, m *discordgo.MessageCreate, _ *service.Player /*args*/, _ map[string]string, b *service.Brain) error {
-	return nil
+func clearCache(ctx context.Context, s *discordgo.Session, m *discordgo.MessageCreate, _ *service.Player, _ map[string]string, b *service.Brain) error {
+
+	err := b.StopAllPlayers(m)
+	if err != nil {
+		return err
+	}
+
+	time.Sleep(time.Second) // TODO: refactor to remove this, remove all should be done in a protected context
+
+	return os.RemoveAll(MediaCacheDir)
 }

@@ -101,6 +101,24 @@ func newRegexMatcher(requirePlayer bool, re *regexp.Regexp, handler func(context
 	}
 }
 
+func newRegexMatcherWithBrain(requirePlayer bool, re *regexp.Regexp, handler func(context.Context, *discordgo.Session, *discordgo.MessageCreate, *service.Player, map[string]string, *service.Brain) error) func(*service.Player, string) func(context.Context, *discordgo.Session, *discordgo.MessageCreate, *service.Player, *service.Brain) error {
+	return func(p *service.Player, s string) func(context.Context, *discordgo.Session, *discordgo.MessageCreate, *service.Player, *service.Brain) error {
+
+		if p == nil && requirePlayer {
+			return nil
+		}
+
+		args := regexMap(re, s)
+		if args == nil {
+			return nil
+		}
+
+		return func(ctx context.Context, s *discordgo.Session, m *discordgo.MessageCreate, p *service.Player, b *service.Brain) error {
+			return handler(ctx, s, m, p, args, b)
+		}
+	}
+}
+
 func regexMap(r *regexp.Regexp, s string) map[string]string {
 
 	args := r.FindStringSubmatch(s)

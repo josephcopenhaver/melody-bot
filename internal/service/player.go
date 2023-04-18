@@ -169,9 +169,7 @@ func (m *PlayerMemory) play(s State, r *playRequest, debug func() *zerolog.Event
 			m.currentTrackIdx = len(m.tracks) - 1
 		}
 		// TODO: else if already in track list, then consider moving track to end or moving the currentTrackIdx
-	case StatePaused:
-		fallthrough
-	case StatePlaying:
+	case StatePaused, StatePlaying:
 		i := m.indexOfTrack(t.SrcUrlStr())
 		if i == -1 {
 			m.tracks = append(m.tracks, t)
@@ -179,15 +177,17 @@ func (m *PlayerMemory) play(s State, r *playRequest, debug func() *zerolog.Event
 	}
 }
 
+// hasAudience is broken in latest release of discord-go
 func (m *PlayerMemory) hasAudience(s *discordgo.Session, guildId string) bool {
 
 	if m.voiceChannelId == "" {
+		log.Error().Msg("player: no voice channel id set, assuming no audience")
 		return false
 	}
 
 	g, err := s.State.Guild(guildId)
 	if err != nil || g == nil {
-		log.Err(err).Msg("player: hasAudience: failed to get guild voice states")
+		log.Err(err).Msg("player: hasAudience: failed to get guild voice states, assuming no audience")
 		return false
 	}
 
@@ -218,6 +218,11 @@ func (m *PlayerMemory) hasAudience(s *discordgo.Session, guildId string) bool {
 
 		return true
 	}
+
+	log.Error().
+		Int("voice_state_count", len(g.VoiceStates)).
+		Str("guild_id", guildId).
+		Msg("player: found no human voice states")
 
 	return false
 }
@@ -314,6 +319,7 @@ func (p *Player) withMemoryErr(f func(m *PlayerMemory) error) error {
 
 	err := f(&m)
 	if err != nil {
+		log.Err(err).Msg("error interacting with player memory")
 		return err
 	}
 
@@ -451,6 +457,8 @@ func (p *Player) SetVoiceConnection(srcEvt interface{}, channelId string, c *dis
 
 func (p *Player) ClearPlaylist(srcEvt interface{}) {
 
+	p.Stop(srcEvt)
+
 	p.withMemory(func(m *PlayerMemory) {
 
 		m.tracks = nil
@@ -578,7 +586,6 @@ func (p *Player) broadcastTextMessage(s string) {
 	}
 
 	p.debug().
-		Str("guild_id", p.discordGuildId).
 		Str("notification_message", s).
 		Msg("broadcasting notification")
 

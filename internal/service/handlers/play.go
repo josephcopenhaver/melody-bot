@@ -15,6 +15,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/rs/zerolog/log"
 
@@ -45,11 +46,12 @@ func Play() HandleMessageCreate {
 }
 
 type audioStream struct {
-	srcVideoUrlStr string
-	size           int64
+	srcVideoUrlStr   string
+	size             int64
+	ytApiClient      *youtube.Client
+	ytDownloadClient *youtube.Client
 	*youtube.Video
 	*youtube.Format
-	httpClient  *http.Client
 	dstFilePath string
 }
 
@@ -107,6 +109,97 @@ func (as *audioStream) SrcUrlStr() string {
 	return as.srcVideoUrlStr
 }
 
+func (as *audioStream) SelectDownloadURL(ctx context.Context) error {
+
+	ytVid, err := as.ytApiClient.GetVideoContext(ctx, as.srcVideoUrlStr)
+	if err != nil {
+		log.Err(err).Msg("failed to get video context")
+		return err
+	}
+
+	cacheDir := path.Join(MediaCacheDir, ytVid.ID)
+	cachedRef := path.Join(cacheDir, "audio.s16le")
+
+	formats := ytVid.Formats.Type("video/mp4")
+	formats.Sort()
+
+	for _, f := range formats {
+
+		if f.AudioChannels <= 0 {
+			continue
+		}
+
+		// TODO: in the future try to select the lowest bitrate
+		// if dstFormat != nil {
+		// 	if dstFormat.Bitrate <= f.Bitrate {
+		// 		continue
+		// 	}
+		// }
+
+		n := f
+
+		newReader, newSize, err := as.ytApiClient.GetStreamContext(ctx, ytVid, &n)
+		if err != nil {
+			continue
+		}
+		if newReader != nil {
+			newReader.Close()
+		}
+		if newSize == 0 {
+			// try again, there is a bug in the client implementation
+			newReader, newSize, err = as.ytApiClient.GetStreamContext(ctx, ytVid, &n)
+			if err != nil {
+				continue
+			}
+			if newReader != nil {
+				newReader.Close()
+			}
+			if newSize == 0 {
+				log.Error().
+					Str("video_url", as.srcVideoUrlStr).
+					Str("format_url", f.URL).
+					Msg("stream size consistently returned zero bytes which should be impossible")
+				continue
+			}
+		}
+
+		// choose this stream format
+
+		as.size = newSize
+		as.Format = &n
+	}
+
+	if as.Format == nil {
+		log.Error().Int("search_count", len(formats)).Msg("failed to find a usable video format")
+		return fmt.Errorf("failed to find a usable video format, searched %d", len(formats))
+	}
+
+	// write new values to internal state
+	as.dstFilePath = cachedRef
+	as.Video = ytVid
+
+	log.Debug().
+		Str("ID", as.ID).
+		Int("ItagNo", as.ItagNo).
+		Int("Bitrate", as.Bitrate).
+		Str("AudioQuality", as.AudioQuality).
+		Str("AudioSampleRate", as.AudioSampleRate).
+		Str("Quality", as.Quality).
+		Str("QualityLabel", as.QualityLabel).
+		Str("URL", as.URL).
+		Int("AudioChannels", as.AudioChannels).
+		Msg("found video format")
+
+	return nil
+}
+
+func (as *audioStream) getStream(ctx context.Context, video *youtube.Video, format *youtube.Format) (io.ReadCloser, int64, error) {
+	// GetStreamContext has a bug, sometimes returns zero size and no err
+	//
+	// TODO: open an issue/fix with the lib maintainer
+	return as.ytDownloadClient.GetStreamContext(ctx, video, format)
+}
+
 func (as *audioStream) Cached() bool {
 
 	info, err := os.Stat(as.dstFilePath)
@@ -158,6 +251,12 @@ func (as *audioStream) ReadCloser(ctx context.Context, wg *sync.WaitGroup) (io.R
 		if errResp.err != nil {
 			return
 		}
+
+		log.Err(err).
+			Str("src_url", as.srcVideoUrlStr).
+			Str("dst_path", as.dstFilePath).
+			Int64("size", as.size).
+			Msg("error")
 
 		errResp.err = err
 	}
@@ -219,20 +318,45 @@ func (as *audioStream) ReadCloser(ctx context.Context, wg *sync.WaitGroup) (io.R
 
 		defer pw.Close()
 
-		var dlc youtube.Client
-		dlc.HTTPClient = as.httpClient
+		log.Debug().
+			Int64("content-length", as.Format.ContentLength).
+			Str("video-url", as.srcVideoUrlStr).
+			Msg("getting stream")
 
-		f, s, err := dlc.GetStream(as.Video, as.Format)
+		f, s, err := as.getStream(ctx, as.Video, as.Format)
 		if err != nil {
 			setErr(err)
 			return
 		}
-		defer f.Close()
+		defer func() {
+			if f != nil {
+				f.Close()
+			}
+		}()
+		if s == 0 {
+			if v := f; v != nil {
+				f = nil
+				v.Close()
+			}
+			if err := as.SelectDownloadURL(ctx); err != nil {
+				setErr(err)
+				return
+			}
+			f, s, err = as.getStream(ctx, as.Video, as.Format)
+			if err != nil {
+				setErr(err)
+				return
+			}
+			if s == 0 {
+				setErr(errors.New("failed to get stream context"))
+				return
+			}
+		}
 
 		cr := newCountingReader(f)
 
 		if s != as.size {
-			setErr(errors.New("unexpected stream size detected on open"))
+			setErr(fmt.Errorf("unexpected stream size detected on open, expected %d, got %d", as.size, s))
 			return
 		}
 
@@ -316,7 +440,13 @@ func (as *audioStream) ReadCloser(ctx context.Context, wg *sync.WaitGroup) (io.R
 	return &result, nil
 }
 
-var audioStreamHttpClient = http.Client{}
+var apiHttpClient = http.Client{
+	Timeout: 10 * time.Second,
+}
+
+var audioStreamHttpClient = http.Client{
+	Timeout: 17 * time.Hour,
+}
 
 func playAfterTranscode(ctx context.Context, s *discordgo.Session, m *discordgo.MessageCreate, p *service.Player, args map[string]string) error {
 	urlStr := args["url"]
@@ -341,77 +471,17 @@ func playAfterTranscode(ctx context.Context, s *discordgo.Session, m *discordgo.
 		return errors.New("no audience in voice channel")
 	}
 
-	var dlc youtube.Client
-
-	ytVid, err := dlc.GetVideoContext(ctx, urlStr)
-	if err != nil {
-		return err
-	}
-
-	cacheDir := path.Join(MediaCacheDir, ytVid.ID)
-	cachedRef := path.Join(cacheDir, "audio.s16le")
-
 	as := &audioStream{
 		srcVideoUrlStr: urlStr,
-		Video:          ytVid,
-		httpClient:     &audioStreamHttpClient,
-		dstFilePath:    cachedRef,
+		ytApiClient: &youtube.Client{
+			HTTPClient: &apiHttpClient,
+		},
+		ytDownloadClient: &youtube.Client{
+			HTTPClient: &audioStreamHttpClient,
+		},
 	}
 
-	formats := ytVid.Formats.Type("video/mp4")
-	formats.Sort()
-
-	for _, f := range formats {
-
-		if f.AudioChannels <= 0 {
-			continue
-		}
-
-		// TODO: in the future try to select the lowest bitrate
-		// if dstFormat != nil {
-		// 	if dstFormat.Bitrate <= f.Bitrate {
-		// 		continue
-		// 	}
-		// }
-
-		n := f
-
-		newReader, newSize, err := dlc.GetStreamContext(ctx, ytVid, &n)
-		if err != nil {
-			continue
-		}
-
-		newReader.Close()
-
-		if newSize == 0 {
-			continue
-		}
-
-		// choose this stream format
-
-		as.size = newSize
-		as.Format = &n
-	}
-
-	if as == nil {
-		return errors.New("failed to find a usable video format")
-	}
-
-	log.Debug().
-		Str("ID", as.ID).
-		Int("ItagNo", as.ItagNo).
-		Int("Bitrate", as.Bitrate).
-		Str("AudioQuality", as.AudioQuality).
-		Str("AudioSampleRate", as.AudioSampleRate).
-		Str("Quality", as.Quality).
-		Str("QualityLabel", as.QualityLabel).
-		Str("URL", as.URL).
-		Int("AudioChannels", as.AudioChannels).
-		Msg("found video format")
-
-	play(p, m, as)
-
-	return nil
+	return play(ctx, p, m, as)
 }
 
 func findVoiceChannel(s *discordgo.Session, m *discordgo.MessageCreate, p *service.Player) (*discordgo.VoiceConnection, error) {
@@ -433,30 +503,62 @@ func findVoiceChannel(s *discordgo.Session, m *discordgo.MessageCreate, p *servi
 
 	// find current voice channel of message sender and join it
 
+	var chanID string
 	for _, v := range g.VoiceStates {
 		if v.UserID != m.Author.ID {
 			continue
 		}
 
-		mute := false
-		deaf := true
-
-		result, err := s.ChannelVoiceJoin(m.GuildID, v.ChannelID, mute, deaf)
-		if err != nil {
-			return nil, err
-		}
-
-		p.SetVoiceConnection(m, v.ChannelID, result)
-
-		return result, nil
+		chanID = v.ChannelID
+		break
 	}
 
-	return nil, nil
+	if chanID == "" {
+		return nil, nil
+	}
+
+	mute := false
+	deaf := true
+
+	err = nil
+	for tryCount := 0; tryCount < 6; tryCount++ {
+		result, err = s.ChannelVoiceJoin(m.GuildID, chanID, mute, deaf) // can take up to 10 seconds to return a timeout error
+		if err == nil {
+			break
+		}
+
+		if v := result; v != nil {
+			result = nil
+
+			// The ChannelVoiceJoin call calls Close, but not Disconnect, it leaves the client in a connected state with an unready - but logically closed connection
+			// TODO: open bug with library maintainer
+			func() {
+				s.Lock()
+				defer s.Unlock()
+
+				delete(s.VoiceConnections, m.GuildID)
+			}()
+		}
+
+		time.Sleep(1 * time.Second) // TODO: find a better way to deal with: error: failed to auto-join a voice channel: timeout waiting for voice
+	}
+
+	p.SetVoiceConnection(m, chanID, result)
+
+	return result, nil
 }
 
 // play can be called multiple times
 // when the cacheDir is not empty then the file will be playable
-func play(p *service.Player, m *discordgo.MessageCreate, as service.AudioStreamer) {
+func play(ctx context.Context, p *service.Player, m *discordgo.MessageCreate, as service.AudioStreamer) error {
+
+	if v, ok := as.(interface{ SelectDownloadURL(context.Context) error }); ok && v != nil {
+		if err := v.SelectDownloadURL(ctx); err != nil {
+			return err
+		}
+	}
 
 	p.Play(m, m.Message.Author.ID, m.Author.Mention(), as)
+
+	return nil
 }
