@@ -6,6 +6,7 @@ import (
 	"github.com/bwmarrin/discordgo"
 	"github.com/josephcopenhaver/melody-bot/internal/service"
 	"github.com/josephcopenhaver/melody-bot/internal/service/handlers"
+	. "github.com/josephcopenhaver/melody-bot/internal/service/server/reactions"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 )
@@ -292,19 +293,19 @@ func (srv *Server) addMuxHandlers() {
 
 		ctx := logger.WithContext(srv.ctx)
 
-		err = s.MessageReactionAdd(m.ChannelID, m.ID, ReactionStatusThinking)
+		err = s.MessageReactionAdd(m.ChannelID, m.ID, ReactionStatusThinking.String())
 		if err != nil {
 			logger.Err(err).Msg("failed to react with thinking")
 		} else {
 			defer func() {
-				err := s.MessageReactionRemove(m.ChannelID, m.ID, ReactionStatusThinking, "@me")
+				err := s.MessageReactionRemove(m.ChannelID, m.ID, ReactionStatusThinking.String(), "@me")
 				if err != nil {
 					logger.Err(err).Msg("failed to remove thinking reaction")
 				}
 			}()
 		}
 
-		var reaction string
+		var reaction ReactionStatus
 		defer func() {
 			if reaction == "" {
 				return
@@ -321,7 +322,7 @@ func (srv *Server) addMuxHandlers() {
 				}
 			}()
 
-			err := s.MessageReactionAdd(m.ChannelID, m.ID, reaction)
+			err := s.MessageReactionAdd(m.ChannelID, m.ID, reaction.String())
 			if err != nil {
 				logger.Err(err).Msg("failed to react")
 			}
@@ -339,6 +340,10 @@ func (srv *Server) addMuxHandlers() {
 			err := handler(ctx, s, m, p, srv.Brain)
 			if err != nil {
 				reaction = ReactionStatusErr
+
+				if v, ok := err.(interface{ Reaction() ReactionStatus }); ok {
+					reaction = v.Reaction()
+				}
 
 				logger.Err(err).
 					Str("handler_name", h.Name).

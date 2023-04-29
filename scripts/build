@@ -27,7 +27,7 @@ JOSEPHCOPENHAVER_GOPUS_GIT_SHA=17c317f9c9e9545df42c4ffc0bb9252ee6261868
     set -eo pipefail
 
     if [ ! -d vendor/github.com/josephcopenhaver/gopus ] || [ ! -d vendor/github.com/josephcopenhaver/gopus/.git ] || [ ! -d "vendor/github.com/josephcopenhaver/gopus/opus-1.1.2" ] || [[ "$(cd gopus && git log -1 --format=%H)" != "$JOSEPHCOPENHAVER_GOPUS_GIT_SHA" ]]; then
-        dstDir="$PWD/vendor/github.com/josephcopenhaver/gopus"
+        dstDir="$PWD/vendor/github.com/josephcopenhaver"
         mkdir -p vendor-ext/github.com/josephcopenhaver
         cd vendor-ext/github.com/josephcopenhaver
         if [ ! -d gopus ] || [ ! -d gopus/.git ] || [[ "$(cd gopus && git log -1 --format=%H)" != "$JOSEPHCOPENHAVER_GOPUS_GIT_SHA" ]]; then
@@ -42,8 +42,7 @@ JOSEPHCOPENHAVER_GOPUS_GIT_SHA=17c317f9c9e9545df42c4ffc0bb9252ee6261868
         echo "rsync'ing vendor-ext/github.com/josephcopenhaver/gopus"
         echo ""
 
-        # rm -rf "$dstDir" # TODO: the dir "vendor/github.com/josephcopenhaver/gopus/opus-1.1.2" is sometimes not getting created, no idea why not
-        rsync -an --delete gopus/ "$dstDir/"
+        rsync -a --delete "$PWD/gopus/" "$dstDir/gopus/"
     fi
 )
 
