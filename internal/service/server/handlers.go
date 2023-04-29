@@ -307,7 +307,7 @@ func (srv *Server) addMuxHandlers() {
 
 		var reaction ReactionStatus
 		defer func() {
-			if reaction == "" {
+			if reaction == ReactionStatusZeroValue {
 				return
 			}
 
@@ -341,7 +341,7 @@ func (srv *Server) addMuxHandlers() {
 			if err != nil {
 				reaction = ReactionStatusErr
 
-				if v, ok := err.(interface{ Reaction() ReactionStatus }); ok {
+				if v, ok := err.(Reactor); ok {
 					reaction = v.Reaction()
 				}
 
