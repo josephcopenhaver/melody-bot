@@ -8,6 +8,7 @@ import (
 	"io"
 	"io/ioutil"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"path"
@@ -23,6 +24,7 @@ import (
 	"github.com/kkdai/youtube/v2"
 
 	"github.com/josephcopenhaver/melody-bot/internal/service"
+	"github.com/josephcopenhaver/melody-bot/internal/service/server/reactions"
 )
 
 const (
@@ -40,7 +42,7 @@ func Play() HandleMessageCreate {
 		newRegexMatcher(
 			true,
 			regexp.MustCompile(`^\s*play\s+(?P<url>[^\s]+.*?)\s*$`),
-			playAfterTranscode,
+			handlePlayRequest,
 		),
 	)
 }
@@ -110,6 +112,11 @@ func (as *audioStream) SrcUrlStr() string {
 }
 
 func (as *audioStream) SelectDownloadURL(ctx context.Context) error {
+
+	// protect against getting called more than once
+	if as.Video != nil {
+		return nil
+	}
 
 	ytVid, err := as.ytApiClient.GetVideoContext(ctx, as.srcVideoUrlStr)
 	if err != nil {
@@ -448,8 +455,120 @@ var audioStreamHttpClient = http.Client{
 	Timeout: 17 * time.Hour,
 }
 
-func playAfterTranscode(ctx context.Context, s *discordgo.Session, m *discordgo.MessageCreate, p *service.Player, args map[string]string) error {
+func newYoutubeApiClient() *youtube.Client {
+	return &youtube.Client{
+		HTTPClient: &apiHttpClient,
+	}
+}
+
+func newYoutubeDownloadClient() *youtube.Client {
+	return &youtube.Client{
+		HTTPClient: &audioStreamHttpClient,
+	}
+}
+
+func handlePlayRequest(ctx context.Context, s *discordgo.Session, m *discordgo.MessageCreate, p *service.Player, args map[string]string) error {
 	urlStr := args["url"]
+
+	if handled, err := processPlaylist(ctx, s, m, p, urlStr); err != nil {
+		return err
+	} else if handled {
+		return nil
+	}
+
+	return playAfterTranscode(ctx, s, m, p, urlStr)
+}
+
+func processPlaylist(ctx context.Context, s *discordgo.Session, m *discordgo.MessageCreate, p *service.Player, urlStr string) (bool, error) {
+	var result bool
+
+	ac := newYoutubeApiClient()
+
+	var u *url.URL
+	if v, err := url.Parse(urlStr); err != nil || v == nil {
+		log.Ctx(ctx).Debug().
+			Err(err).
+			Str("url", urlStr).
+			Msg("failed to parse url argument")
+		return result, nil
+	} else {
+		u = v
+	}
+
+	if u.Path == "" || !strings.HasPrefix(u.Path, "/") {
+		u.Path = "/" + u.Path
+	}
+
+	if u.Path != "/playlist" && u.Path != "/playlist/" {
+		log.Ctx(ctx).Debug().
+			Str("url", urlStr).
+			Msg("not a playlist url")
+		return result, nil
+	}
+
+	// take ownership of the request handling context:
+	result = true
+
+	pl, err := ac.GetPlaylistContext(ctx, urlStr)
+	if err != nil {
+		return result, fmt.Errorf("failed to download playlist: %w", err)
+	}
+
+	// ensure that the bot is first in a voice channel
+	{
+		c, err := findVoiceChannel(s, m, p)
+		if err != nil {
+			return result, fmt.Errorf("failed to auto-join a voice channel: %v", err)
+		}
+
+		if c == nil {
+			return result, errors.New("not in a voice channel")
+		}
+	}
+
+	if !p.HasAudience() {
+		return result, errors.New("no audience in voice channel")
+	}
+
+	if len(pl.Videos) == 0 {
+		return result, errors.New("youtube playlist was empty")
+	}
+
+	mention := m.Author.Mention()
+
+	var numFailed, numSuccess int
+	for _, v := range pl.Videos {
+		as := &audioStream{
+			srcVideoUrlStr:   fmt.Sprintf("https://www.youtube.com/watch?v=%s", url.QueryEscape(v.ID)),
+			ytApiClient:      ac,
+			ytDownloadClient: newYoutubeDownloadClient(),
+		}
+		if err := as.SelectDownloadURL(ctx); err != nil {
+			log.Ctx(ctx).Err(err).
+				Str("track", as.srcVideoUrlStr).
+				Msg("failed to select download url")
+
+			p.BroadcastTextMessage("Failed to queue " + as.srcVideoUrlStr)
+
+			numFailed += 1
+			continue
+		}
+
+		numSuccess += 1
+		p.Play(m, m.Message.Author.ID, mention, as)
+	}
+
+	if numFailed > 0 {
+		if numSuccess == 0 {
+			return result, fmt.Errorf("all %d tracks could not be imported from playlist", numFailed)
+		}
+		return result, reactions.NewWarning(fmt.Errorf("%d out of %d tracks could not be imported from playlist", numFailed, numFailed+numSuccess))
+	}
+
+	return result, nil
+}
+
+func playAfterTranscode(ctx context.Context, s *discordgo.Session, m *discordgo.MessageCreate, p *service.Player, urlStr string) error {
 
 	if urlStr == "" {
 		return nil
@@ -472,13 +591,9 @@ func playAfterTranscode(ctx context.Context, s *discordgo.Session, m *discordgo.
 	}
 
 	as := &audioStream{
-		srcVideoUrlStr: urlStr,
-		ytApiClient: &youtube.Client{
-			HTTPClient: &apiHttpClient,
-		},
-		ytDownloadClient: &youtube.Client{
-			HTTPClient: &audioStreamHttpClient,
-		},
+		srcVideoUrlStr:   urlStr,
+		ytApiClient:      newYoutubeApiClient(),
+		ytDownloadClient: newYoutubeDownloadClient(),
 	}
 
 	return play(ctx, p, m, as)

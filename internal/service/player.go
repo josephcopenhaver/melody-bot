@@ -585,6 +585,10 @@ func (p *Player) broadcastTextMessage(s string) {
 	}
 }
 
+func (p *Player) BroadcastTextMessage(s string) {
+	p.broadcastTextMessage(s)
+}
+
 func (p *Player) sendChannel() chan<- []byte {
 	var vc *discordgo.VoiceConnection
 	var result chan<- []byte
