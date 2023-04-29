@@ -538,6 +538,10 @@ func processPlaylist(ctx context.Context, s *discordgo.Session, m *discordgo.Mes
 
 	var numFailed, numSuccess int
 	for _, v := range pl.Videos {
+		if ctx.Err() != nil {
+			return result, err
+		}
+
 		as := &audioStream{
 			srcVideoUrlStr:   fmt.Sprintf("https://www.youtube.com/watch?v=%s", url.QueryEscape(v.ID)),
 			ytApiClient:      ac,
@@ -555,6 +559,10 @@ func processPlaylist(ctx context.Context, s *discordgo.Session, m *discordgo.Mes
 		}
 
 		numSuccess += 1
+
+		if ctx.Err() != nil {
+			return result, err
+		}
 		p.Play(m, m.Message.Author.ID, mention, as)
 	}
 
