@@ -1,40 +1,78 @@
 package reactions
 
-type ReactionStatus string
-
-func (rs ReactionStatus) String() string {
-	return string(rs)
-}
-
-const (
-	ReactionStatusThinking ReactionStatus = "\U0001F914"
-	ReactionStatusOK       ReactionStatus = "\u2705"
-	ReactionStatusErr      ReactionStatus = "\u274C"
-	ReactionStatusWarning  ReactionStatus = "\u26A0"
+import (
+	"fmt"
 )
 
-type warning struct {
-	error
+type ReactionStatus uint8
+
+const ReactionStatusZeroValue ReactionStatus = 0
+
+const (
+	ReactionStatusUndefinedLower ReactionStatus = iota
+	//
+	ReactionStatusThinking
+	ReactionStatusOK
+	ReactionStatusErr
+	ReactionStatusWarning
+	//
+	ReactionStatusUndefinedUpper
+)
+
+func (rs ReactionStatus) String() string {
+
+	// m := map[ReactionStatus]string{
+	// 	ReactionStatusThinking: "\U0001F914",
+	// 	ReactionStatusOK:       "\u2705",
+	// 	ReactionStatusErr:      "\u274C",
+	// 	ReactionStatusWarning:  "\u26A0",
+	// }
+
+	if rs <= ReactionStatusUndefinedLower || rs >= ReactionStatusUndefinedUpper {
+		return fmt.Sprintf("ReactionStatus(%d)", rs)
+	}
+
+	return []string{
+		"\U0001F914",
+		"\u2705",
+		"\u274C",
+		"\u26A0",
+	}[rs-1]
 }
 
-func NewWarning(err error) warning {
-	return warning{err}
+type errWithReaction struct {
+	err error
+	rs  ReactionStatus
 }
 
-func (e warning) Error() string {
-	err := e.error
+func NewWarning(err error) *errWithReaction {
+	return newErrWithReaction(err, ReactionStatusWarning)
+}
+
+func newErrWithReaction(err error, rs ReactionStatus) *errWithReaction {
+	return &errWithReaction{err, rs}
+}
+
+func (e *errWithReaction) Error() string {
+	err := e.err
 
 	if err == nil {
-		return ""
+		return "errWithReaction: unknown error"
 	}
 
 	return err.Error()
 }
 
-func (e warning) Unwrap() error {
-	return e.error
+func (e *errWithReaction) Unwrap() error {
+	return e.err
 }
 
-func (e warning) Reaction() ReactionStatus {
-	return ReactionStatusWarning
+func (e *errWithReaction) Reaction() ReactionStatus {
+	return e.rs
 }
+
+type Reactor interface {
+	Reaction() ReactionStatus
+}
+
+var _ Reactor = newErrWithReaction(nil, ReactionStatusZeroValue)
