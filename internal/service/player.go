@@ -100,7 +100,8 @@ type Track struct {
 }
 
 type playRequest struct {
-	track *Track
+	track      *Track
+	isSyncCall bool
 }
 
 type Playlist struct {
@@ -168,7 +169,7 @@ func (m *PlayerMemory) play(s State, r *playRequest, debug func() *zerolog.Event
 
 	switch s {
 	case StateDefault:
-		m.tracks = []Track{t}
+		m.tracks = append(m.tracks, t)
 		m.currentTrackIdx = 0
 	case StateIdle:
 		i := m.indexOfTrack(t.SrcUrlStr())
@@ -239,6 +240,13 @@ type PlayerStateMachine struct {
 	state State
 }
 
+type PlayCall struct {
+	MessageCreate *discordgo.MessageCreate
+	AuthorID      string
+	AuthorMention string
+	AudioStreamer AudioStreamer
+}
+
 type Player struct {
 	ctx            context.Context
 	wg             *sync.WaitGroup
@@ -251,6 +259,7 @@ type Player struct {
 	signalChan   chan TracedSignal
 	cancelMutex  sync.Mutex
 	cancelFuncs  map[*func(error)]struct{}
+	playPacks    chan (<-chan PlayCall)
 }
 
 func NewPlayer(ctx context.Context, wg *sync.WaitGroup, s *discordgo.Session, guildId string) *Player {
@@ -265,6 +274,7 @@ func NewPlayer(ctx context.Context, wg *sync.WaitGroup, s *discordgo.Session, gu
 			state: StateDefault,
 		},
 		cancelFuncs: map[*func(error)]struct{}{},
+		playPacks:   make(chan (<-chan PlayCall)),
 	}
 
 	p.memory.Store(PlayerMemory{
@@ -274,6 +284,8 @@ func NewPlayer(ctx context.Context, wg *sync.WaitGroup, s *discordgo.Session, gu
 
 	wg.Add(1)
 	go p.playerGoroutine(wg)
+	wg.Add(1)
+	go p.playPackGoroutine(wg)
 
 	return p
 }
@@ -497,27 +509,6 @@ func (p *Player) CycleRepeatMode(srcEvt interface{}) string {
 	return result
 }
 
-func (p *Player) Play(srcEvt interface{}, authorId, authorMention string, as AudioStreamer) {
-	// TODO: pool
-	payload := &playRequest{
-		track: &Track{
-			AudioStreamer: as,
-			AuthorId:      authorId,
-			AuthorMention: authorMention,
-		},
-	}
-
-	p.withMemory(func(m *PlayerMemory) {
-		if as.PlaylistID() != m.id.String() {
-			// context is expired and is no longer valid
-			return
-		}
-
-		p.signalChan <- TracedSignal{srcEvt, SignalPlay, payload}
-
-	})
-}
-
 func (p *Player) SetVoiceConnection(srcEvt interface{}, channelId string, c *discordgo.VoiceConnection) {
 
 	p.withMemory(func(m *PlayerMemory) {
@@ -712,6 +703,74 @@ func (p *Player) debug() *zerolog.Event {
 		Str("guild_id", p.discordGuildId)
 }
 
+func (p *Player) Enqueue(playPack <-chan PlayCall) (result bool) {
+	defer func() {
+		// TODO: unhackify this in some fashion
+		// should never attempt to offer to the channel if it is closed
+		if r := recover(); r != nil {
+			result = false
+		}
+	}()
+
+	p.playPacks <- playPack
+
+	return true
+}
+
+func (p *Player) playPackGoroutine(wg *sync.WaitGroup) {
+	defer wg.Done()
+	defer close(p.playPacks)
+
+	doneChan := p.ctx.Done()
+
+	var done bool
+	for !done {
+		select {
+		case <-doneChan:
+			done = true
+			continue
+		default:
+		}
+
+		select {
+		case <-doneChan:
+			done = true
+			continue
+		case playPackChan, ok := <-p.playPacks:
+			if !ok {
+				done = true
+				continue
+			}
+
+			isFirst := true
+			for v := range playPackChan {
+				as := v.AudioStreamer
+
+				// TODO: pool
+				payload := &playRequest{
+					track: &Track{
+						AudioStreamer: as,
+						AuthorId:      v.AuthorID,
+						AuthorMention: v.AuthorMention,
+					},
+					isSyncCall: isFirst,
+				}
+				isFirst = false
+
+				p.withMemory(func(m *PlayerMemory) {
+					if as.PlaylistID() != m.id.String() {
+						// context is expired and is no longer valid
+						return
+					}
+
+					p.signalChan <- TracedSignal{v.MessageCreate, SignalPlay, payload}
+
+				})
+			}
+		}
+	}
+}
+
 func (p *Player) playerGoroutine(wg *sync.WaitGroup) {
 	defer wg.Done()
 
@@ -806,18 +865,27 @@ func (p *Player) playerStateMachine() error {
 		case SignalPlay:
 			hasAudience := false
 
+			pr := s.signalPayload.(*playRequest)
+
 			p.withMemory(func(m *PlayerMemory) {
-				m.play(p.stateMachine.state, s.signalPayload.(*playRequest), p.debug)
-				hasAudience = m.hasAudience(p.discordSession, p.discordGuildId)
+				m.play(p.stateMachine.state, pr, p.debug)
+				if pr.isSyncCall {
+					hasAudience = m.hasAudience(p.discordSession, p.discordGuildId)
+				}
 			})
 
-			if !hasAudience {
-				p.notifyNoAudience(s.sig)
-				p.stateMachine.state = StateIdle
-				return nil
-			}
+			if pr.isSyncCall {
 
-			p.stateMachine.state = StatePlaying
+				if !hasAudience {
+					p.notifyNoAudience(s.sig)
+					p.stateMachine.state = StateIdle
+					return nil
+				}
+
+				p.stateMachine.state = StatePlaying
+			} else {
+				p.stateMachine.state = StateIdle
+			}
 		}
 	case StateIdle:
 
@@ -842,17 +910,24 @@ func (p *Player) playerStateMachine() error {
 		case SignalPlay:
 			hasAudience := false
 
+			pr := s.signalPayload.(*playRequest)
+
 			p.withMemory(func(m *PlayerMemory) {
-				m.play(p.stateMachine.state, s.signalPayload.(*playRequest), p.debug)
-				hasAudience = m.hasAudience(p.discordSession, p.discordGuildId)
+				m.play(p.stateMachine.state, pr, p.debug)
+				if pr.isSyncCall {
+					hasAudience = m.hasAudience(p.discordSession, p.discordGuildId)
+				}
 			})
 
-			if !hasAudience {
-				p.notifyNoAudience(s.sig)
-				return nil
-			}
+			if pr.isSyncCall {
+				if !hasAudience {
+					p.notifyNoAudience(s.sig)
+					return nil
+				}
 
-			p.stateMachine.state = StatePlaying
+				p.stateMachine.state = StatePlaying
+			}
+			// else stay in the idle state
 		case SignalResume:
 			p.stateMachine.state = StatePlaying
 		case SignalNext:
@@ -986,14 +1061,19 @@ func (p *Player) playerStateMachine() error {
 					case SignalNewVoiceConnection:
 						sendChan = nil
 					case SignalPlay:
+
+						pr := s.signalPayload.(*playRequest)
+
 						p.withMemory(func(m *PlayerMemory) {
-							m.play(p.stateMachine.state, s.signalPayload.(*playRequest), p.debug)
+							m.play(p.stateMachine.state, pr, p.debug)
 						})
 
-						broadcastMsg := "player is paused; to resume playback send the following message:\n\n" +
-							p.discordSession.State.User.Mention() + " resume"
+						if pr.isSyncCall {
+							broadcastMsg := "player is paused; to resume playback send the following message:\n\n" +
+								p.discordSession.State.User.Mention() + " resume"
 
-						p.broadcastTextMessage(broadcastMsg)
+							p.broadcastTextMessage(broadcastMsg)
+						}
 					case SignalPrevious:
 						p.previousTrack(1) // current track is paused
 						p.stateMachine.state = StateIdle
