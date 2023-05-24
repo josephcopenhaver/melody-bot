@@ -15,7 +15,12 @@ import (
 	"github.com/rs/zerolog/log"
 
 	"github.com/bwmarrin/discordgo"
+	"github.com/google/uuid"
 )
+
+type PlaylistID struct {
+	uuid.UUID
+}
 
 // Signal: a command that can be sent to the player
 type Signal int8
@@ -84,6 +89,7 @@ type AudioStreamer interface {
 	ReadCloser(context.Context, *sync.WaitGroup) (io.ReadCloser, error)
 	SrcUrlStr() string
 	Cached() bool
+	PlaylistID() string
 }
 
 type Track struct {
@@ -103,6 +109,7 @@ type Playlist struct {
 }
 
 type PlayerMemory struct {
+	id              uuid.UUID
 	voiceChannelId  string
 	voiceConnection *discordgo.VoiceConnection
 	notLooping      bool
@@ -115,6 +122,7 @@ func (m *PlayerMemory) reset() {
 	vc := m.voiceConnection
 
 	*m = PlayerMemory{
+		id:              uuid.New(),
 		currentTrackIdx: -1,
 	}
 
@@ -241,6 +249,8 @@ type Player struct {
 
 	stateMachine PlayerStateMachine
 	signalChan   chan TracedSignal
+	cancelMutex  sync.Mutex
+	cancelFuncs  map[*func(error)]struct{}
 }
 
 func NewPlayer(ctx context.Context, wg *sync.WaitGroup, s *discordgo.Session, guildId string) *Player {
@@ -254,9 +264,11 @@ func NewPlayer(ctx context.Context, wg *sync.WaitGroup, s *discordgo.Session, gu
 		stateMachine: PlayerStateMachine{
 			state: StateDefault,
 		},
+		cancelFuncs: map[*func(error)]struct{}{},
 	}
 
 	p.memory.Store(PlayerMemory{
+		id:              uuid.New(),
 		currentTrackIdx: -1,
 	})
 
@@ -264,6 +276,26 @@ func NewPlayer(ctx context.Context, wg *sync.WaitGroup, s *discordgo.Session, gu
 	go p.playerGoroutine(wg)
 
 	return p
+}
+
+func (p *Player) RegisterCanceler(fp *func(error)) {
+	if fp == nil {
+		return
+	}
+
+	p.withCancelLock(func(m map[*func(error)]struct{}) {
+		m[fp] = struct{}{}
+	})
+}
+
+func (p *Player) DeregisterCanceler(fp *func(error)) {
+	if fp == nil {
+		return
+	}
+
+	p.withCancelLock(func(m map[*func(error)]struct{}) {
+		delete(m, fp)
+	})
 }
 
 func (p *Player) notifyNoAudience(s Signal) {
@@ -296,6 +328,24 @@ func (p *Player) nextTrack() *Track {
 	})
 
 	return result
+}
+
+func (p *Player) PlaylistID() PlaylistID {
+	var result PlaylistID
+
+	p.withMemory(func(m *PlayerMemory) {
+		result = PlaylistID{m.id}
+	})
+
+	return result
+}
+
+func (p *Player) withCancelLock(f func(m map[*func(error)]struct{})) {
+
+	p.cancelMutex.Lock()
+	defer p.cancelMutex.Unlock()
+
+	f(p.cancelFuncs)
 }
 
 func (p *Player) withMemoryErr(f func(m *PlayerMemory) error) error {
@@ -346,6 +396,34 @@ func (p *Player) reset() {
 	p.withMemory(func(m *PlayerMemory) {
 		m.reset()
 	})
+
+	// cancel all old async contexts for the previous playlist id
+	{
+		var oldMap map[*func(error)]struct{}
+		p.withCancelLock(func(m map[*func(error)]struct{}) {
+			oldMap = m
+			p.cancelFuncs = map[*func(error)]struct{}{}
+		})
+
+		if len(oldMap) > 0 {
+			err := context.Canceled
+
+			var wg sync.WaitGroup
+			wg.Add(len(oldMap))
+			for k, _ := range oldMap {
+				k := k
+
+				go func() {
+					defer wg.Done()
+
+					(*k)(err)
+				}()
+			}
+
+			// wait for all cancels to finish
+			wg.Wait()
+		}
+	}
 }
 
 func (p *Player) restartTrack() {
@@ -430,6 +508,11 @@ func (p *Player) Play(srcEvt interface{}, authorId, authorMention string, as Aud
 	}
 
 	p.withMemory(func(m *PlayerMemory) {
+		if as.PlaylistID() != m.id.String() {
+			// context is expired and is no longer valid
+			return
+		}
+
 		p.signalChan <- TracedSignal{srcEvt, SignalPlay, payload}
 
 	})
