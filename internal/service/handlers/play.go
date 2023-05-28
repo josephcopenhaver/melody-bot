@@ -49,6 +49,7 @@ func Play() HandleMessageCreate {
 
 type audioStream struct {
 	pid              service.PlaylistID
+	pslc             time.Time
 	srcVideoUrlStr   string
 	size             int64
 	ytApiClient      *youtube.Client
@@ -111,6 +112,11 @@ func (rc *readCloser) Close() error {
 func (as *audioStream) PlaylistID() string {
 	return as.pid.String()
 }
+
+func (as *audioStream) PlayerStateLastChangedAt() time.Time {
+	return as.pslc
+}
+
 func (as *audioStream) SrcUrlStr() string {
 	return as.srcVideoUrlStr
 }
@@ -472,22 +478,81 @@ func newYoutubeDownloadClient() *youtube.Client {
 }
 
 func handlePlayRequest(ctx context.Context, s *discordgo.Session, m *discordgo.MessageCreate, p *service.Player, args map[string]string) error {
+	pid := p.PlaylistID()
+	pslc := p.StateLastChangedAt()
+
 	urlStr := args["url"]
 
-	pid := p.PlaylistID()
+	playPack := make(chan service.PlayCall, 1)
 
-	if handled, err := processPlaylist(ctx, pid, s, m, p, urlStr); err != nil {
+	p.Enqueue(playPack)
+
+	var play func(ctx context.Context, as *audioStream)
+	{
+		mention := m.Author.Mention()
+		play = func(ctx context.Context, as *audioStream) {
+			as.pid = pid
+			as.pslc = pslc
+			pc := service.PlayCall{
+				MessageCreate: m,
+				AuthorID:      m.Message.Author.ID,
+				AuthorMention: mention,
+				AudioStreamer: as,
+			}
+
+			ctxDone := ctx.Done()
+			select {
+			case <-ctxDone:
+				return
+			default:
+			}
+			select {
+			case <-ctxDone:
+				return
+			case playPack <- pc:
+			}
+		}
+	}
+
+	var closePlayPack func()
+	{
+		var oncer sync.Once
+		closePlayPack = func() {
+			oncer.Do(func() {
+				close(playPack)
+			})
+		}
+	}
+
+	// ensure the channel is absolutely always closed even if something panics
+	defer func() {
+		if r := recover(); r != nil {
+			defer panic(r)
+
+			defer closePlayPack()
+
+			log.Ctx(ctx).Error().
+				Err(errors.New("panicking")).
+				Msg("this should never happen: open a ticket")
+		}
+	}()
+
+	if handled, err := processPlaylist(ctx, s, m, p, play, closePlayPack, urlStr); err != nil {
+		closePlayPack()
 		return err
 	} else if handled {
+		// handling async, don't close the play package
 		return nil
 	}
 
-	return playAfterTranscode(ctx, pid, s, m, p, urlStr)
+	defer closePlayPack()
+
+	return playAfterTranscode(ctx, s, m, p, play, urlStr)
 }
 
 var ErrPanicInPlaylistLoader = errors.New("Panic in playlist loader")
 
-func processPlaylist(ctx context.Context, pid service.PlaylistID, s *discordgo.Session, m *discordgo.MessageCreate, p *service.Player, urlStr string) (bool, error) {
+func processPlaylist(ctx context.Context, s *discordgo.Session, m *discordgo.MessageCreate, p *service.Player, play func(context.Context, *audioStream), closePlayPack func(), urlStr string) (bool, error) {
 	var result bool
 
 	ac := newYoutubeApiClient()
@@ -547,6 +612,7 @@ func processPlaylist(ctx context.Context, pid service.PlaylistID, s *discordgo.S
 	p.RegisterCanceler(extCancel)
 	go func() {
 		defer wg.Done()
+		defer closePlayPack()
 
 		var err error
 		defer func() {
@@ -594,8 +660,6 @@ func processPlaylist(ctx context.Context, pid service.PlaylistID, s *discordgo.S
 				return errors.New("youtube playlist was empty")
 			}
 
-			mention := m.Author.Mention()
-
 			var numFailed, numSuccess int
 			for _, v := range pl.Videos {
 				if ctx.Err() != nil {
@@ -603,7 +667,6 @@ func processPlaylist(ctx context.Context, pid service.PlaylistID, s *discordgo.S
 				}
 
 				as := &audioStream{
-					pid:              pid,
 					srcVideoUrlStr:   fmt.Sprintf("https://www.youtube.com/watch?v=%s", url.QueryEscape(v.ID)),
 					ytApiClient:      ac,
 					ytDownloadClient: newYoutubeDownloadClient(),
@@ -624,7 +687,8 @@ func processPlaylist(ctx context.Context, pid service.PlaylistID, s *discordgo.S
 				if ctx.Err() != nil {
 					return err
 				}
-				p.Play(m, m.Message.Author.ID, mention, as)
+
+				play(ctx, as)
 			}
 
 			if numFailed > 0 {
@@ -641,7 +705,7 @@ func processPlaylist(ctx context.Context, pid service.PlaylistID, s *discordgo.S
 	return result, nil
 }
 
-func playAfterTranscode(ctx context.Context, pid service.PlaylistID, s *discordgo.Session, m *discordgo.MessageCreate, p *service.Player, urlStr string) error {
+func playAfterTranscode(ctx context.Context, s *discordgo.Session, m *discordgo.MessageCreate, p *service.Player, play func(context.Context, *audioStream), urlStr string) error {
 
 	if urlStr == "" {
 		return nil
@@ -664,13 +728,18 @@ func playAfterTranscode(ctx context.Context, pid service.PlaylistID, s *discordg
 	}
 
 	as := &audioStream{
-		pid:              pid,
 		srcVideoUrlStr:   urlStr,
 		ytApiClient:      newYoutubeApiClient(),
 		ytDownloadClient: newYoutubeDownloadClient(),
 	}
 
-	return play(ctx, p, m, as)
+	if err := as.SelectDownloadURL(ctx); err != nil {
+		return err
+	}
+
+	play(ctx, as)
+
+	return nil
 }
 
 func findVoiceChannel(s *discordgo.Session, m *discordgo.MessageCreate, p *service.Player) (*discordgo.VoiceConnection, error) {
@@ -735,19 +804,4 @@ func findVoiceChannel(s *discordgo.Session, m *discordgo.MessageCreate, p *servi
 	p.SetVoiceConnection(m, chanID, result)
 
 	return result, nil
-}
-
-// play can be called multiple times
-// when the cacheDir is not empty then the file will be playable
-func play(ctx context.Context, p *service.Player, m *discordgo.MessageCreate, as service.AudioStreamer) error {
-
-	if v, ok := as.(interface{ SelectDownloadURL(context.Context) error }); ok && v != nil {
-		if err := v.SelectDownloadURL(ctx); err != nil {
-			return err
-		}
-	}
-
-	p.Play(m, m.Message.Author.ID, m.Author.Mention(), as)
-
-	return nil
 }

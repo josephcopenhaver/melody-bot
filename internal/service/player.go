@@ -9,6 +9,7 @@ import (
 	"io"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/josephcopenhaver/gopus"
 	"github.com/rs/zerolog"
@@ -90,6 +91,7 @@ type AudioStreamer interface {
 	SrcUrlStr() string
 	Cached() bool
 	PlaylistID() string
+	PlayerStateLastChangedAt() time.Time
 }
 
 type Track struct {
@@ -101,6 +103,7 @@ type Track struct {
 
 type playRequest struct {
 	track *Track
+	pslc  time.Time
 }
 
 type Playlist struct {
@@ -168,7 +171,7 @@ func (m *PlayerMemory) play(s State, r *playRequest, debug func() *zerolog.Event
 
 	switch s {
 	case StateDefault:
-		m.tracks = []Track{t}
+		m.tracks = append(m.tracks, t)
 		m.currentTrackIdx = 0
 	case StateIdle:
 		i := m.indexOfTrack(t.SrcUrlStr())
@@ -236,7 +239,30 @@ func (m *PlayerMemory) hasAudience(s *discordgo.Session, guildId string) bool {
 }
 
 type PlayerStateMachine struct {
-	state State
+	rwMutex            *sync.RWMutex
+	createdAt          time.Time
+	stateLastChangedAt time.Time
+	state              State
+}
+
+func newPlayerStateMachine(rwm *sync.RWMutex) PlayerStateMachine {
+	now := time.Now()
+	if rwm == nil {
+		rwm = &sync.RWMutex{}
+	}
+	return PlayerStateMachine{
+		rwMutex:            rwm,
+		createdAt:          now,
+		stateLastChangedAt: now,
+		state:              StateDefault,
+	}
+}
+
+type PlayCall struct {
+	MessageCreate *discordgo.MessageCreate
+	AuthorID      string
+	AuthorMention string
+	AudioStreamer AudioStreamer
 }
 
 type Player struct {
@@ -251,6 +277,7 @@ type Player struct {
 	signalChan   chan TracedSignal
 	cancelMutex  sync.Mutex
 	cancelFuncs  map[*func(error)]struct{}
+	playPacks    chan (<-chan PlayCall)
 }
 
 func NewPlayer(ctx context.Context, wg *sync.WaitGroup, s *discordgo.Session, guildId string) *Player {
@@ -261,10 +288,9 @@ func NewPlayer(ctx context.Context, wg *sync.WaitGroup, s *discordgo.Session, gu
 		discordSession: s,
 		discordGuildId: guildId,
 		signalChan:     make(chan TracedSignal, 1),
-		stateMachine: PlayerStateMachine{
-			state: StateDefault,
-		},
-		cancelFuncs: map[*func(error)]struct{}{},
+		stateMachine:   newPlayerStateMachine(nil),
+		cancelFuncs:    map[*func(error)]struct{}{},
+		playPacks:      make(chan (<-chan PlayCall)),
 	}
 
 	p.memory.Store(PlayerMemory{
@@ -274,8 +300,48 @@ func NewPlayer(ctx context.Context, wg *sync.WaitGroup, s *discordgo.Session, gu
 
 	wg.Add(1)
 	go p.playerGoroutine(wg)
+	wg.Add(1)
+	go p.playPackGoroutine(wg)
 
 	return p
+}
+
+func (p *Player) setState(s State) {
+	sm := &p.stateMachine
+
+	sm.rwMutex.RLock()
+	cleanup := sm.rwMutex.RUnlock
+	defer func() {
+		if f := cleanup; f != nil {
+			cleanup = nil
+			f()
+		}
+	}()
+
+	oldState := sm.state
+	if s == oldState {
+		return
+	}
+
+	cleanup()
+
+	sm.rwMutex.Lock()
+	cleanup = sm.rwMutex.Unlock
+
+	// redo read condition check as state may have changed when lock was released and re-acquired for W mode
+	oldState = sm.state
+	if s == oldState {
+		return
+	}
+
+	sm.state = s
+	now := time.Now()
+
+	if oldState == StateDefault {
+		return
+	}
+
+	sm.stateLastChangedAt = now
 }
 
 func (p *Player) RegisterCanceler(fp *func(error)) {
@@ -338,6 +404,16 @@ func (p *Player) PlaylistID() PlaylistID {
 	})
 
 	return result
+}
+
+func (p *Player) StateLastChangedAt() time.Time {
+	p.stateMachine.rwMutex.RLock()
+	defer p.stateMachine.rwMutex.RUnlock()
+	return p.stateMachine.stateLastChangedAt
+}
+
+func (p *Player) stateUnchangedSince(t time.Time) bool {
+	return p.stateMachine.stateLastChangedAt.Compare(t) == 0
 }
 
 func (p *Player) withCancelLock(f func(m map[*func(error)]struct{})) {
@@ -495,27 +571,6 @@ func (p *Player) CycleRepeatMode(srcEvt interface{}) string {
 	})
 
 	return result
-}
-
-func (p *Player) Play(srcEvt interface{}, authorId, authorMention string, as AudioStreamer) {
-	// TODO: pool
-	payload := &playRequest{
-		track: &Track{
-			AudioStreamer: as,
-			AuthorId:      authorId,
-			AuthorMention: authorMention,
-		},
-	}
-
-	p.withMemory(func(m *PlayerMemory) {
-		if as.PlaylistID() != m.id.String() {
-			// context is expired and is no longer valid
-			return
-		}
-
-		p.signalChan <- TracedSignal{srcEvt, SignalPlay, payload}
-
-	})
 }
 
 func (p *Player) SetVoiceConnection(srcEvt interface{}, channelId string, c *discordgo.VoiceConnection) {
@@ -712,6 +767,72 @@ func (p *Player) debug() *zerolog.Event {
 		Str("guild_id", p.discordGuildId)
 }
 
+func (p *Player) Enqueue(playPack <-chan PlayCall) (result bool) {
+	defer func() {
+		// TODO: unhackify this in some fashion
+		// should never attempt to offer to the channel if it is closed
+		if r := recover(); r != nil {
+			result = false
+		}
+	}()
+
+	p.playPacks <- playPack
+
+	return true
+}
+
+func (p *Player) playPackGoroutine(wg *sync.WaitGroup) {
+	defer wg.Done()
+	defer close(p.playPacks)
+
+	doneChan := p.ctx.Done()
+
+	var done bool
+	for !done {
+		select {
+		case <-doneChan:
+			done = true
+			continue
+		default:
+		}
+
+		select {
+		case <-doneChan:
+			done = true
+			continue
+		case playPackChan, ok := <-p.playPacks:
+			if !ok {
+				done = true
+				continue
+			}
+
+			for v := range playPackChan {
+				as := v.AudioStreamer
+
+				// TODO: pool
+				payload := &playRequest{
+					track: &Track{
+						AudioStreamer: as,
+						AuthorId:      v.AuthorID,
+						AuthorMention: v.AuthorMention,
+					},
+					pslc: as.PlayerStateLastChangedAt(),
+				}
+
+				p.withMemory(func(m *PlayerMemory) {
+					if as.PlaylistID() != m.id.String() {
+						// context is expired and is no longer valid
+						return
+					}
+
+					p.signalChan <- TracedSignal{v.MessageCreate, SignalPlay, payload}
+
+				})
+			}
+		}
+	}
+}
+
 func (p *Player) playerGoroutine(wg *sync.WaitGroup) {
 	defer wg.Done()
 
@@ -736,9 +857,7 @@ func (p *Player) playerGoroutine(wg *sync.WaitGroup) {
 			defer func() {
 				if r := recover(); r != nil {
 					prevState := p.stateMachine.state
-					p.stateMachine = PlayerStateMachine{
-						state: StateDefault,
-					}
+					p.stateMachine = newPlayerStateMachine(p.stateMachine.rwMutex)
 					p.reset()
 					evt := log.Error()
 					if e, ok := r.(error); ok {
@@ -806,18 +925,28 @@ func (p *Player) playerStateMachine() error {
 		case SignalPlay:
 			hasAudience := false
 
+			pr := s.signalPayload.(*playRequest)
+			isSyncCall := p.stateUnchangedSince(pr.pslc)
+
 			p.withMemory(func(m *PlayerMemory) {
-				m.play(p.stateMachine.state, s.signalPayload.(*playRequest), p.debug)
-				hasAudience = m.hasAudience(p.discordSession, p.discordGuildId)
+				m.play(p.stateMachine.state, pr, p.debug)
+				if isSyncCall {
+					hasAudience = m.hasAudience(p.discordSession, p.discordGuildId)
+				}
 			})
 
-			if !hasAudience {
-				p.notifyNoAudience(s.sig)
-				p.stateMachine.state = StateIdle
-				return nil
-			}
+			if isSyncCall {
 
-			p.stateMachine.state = StatePlaying
+				if !hasAudience {
+					p.notifyNoAudience(s.sig)
+					p.setState(StateIdle)
+					return nil
+				}
+
+				p.setState(StatePlaying)
+			} else {
+				p.setState(StateIdle)
+			}
 		}
 	case StateIdle:
 
@@ -837,24 +966,32 @@ func (p *Player) playerStateMachine() error {
 			sendChan = nil
 		case SignalReset:
 			p.reset()
-			p.stateMachine.state = StateIdle
+			p.setState(StateIdle)
 			return nil
 		case SignalPlay:
 			hasAudience := false
 
+			pr := s.signalPayload.(*playRequest)
+			isSyncCall := p.stateUnchangedSince(pr.pslc)
+
 			p.withMemory(func(m *PlayerMemory) {
-				m.play(p.stateMachine.state, s.signalPayload.(*playRequest), p.debug)
-				hasAudience = m.hasAudience(p.discordSession, p.discordGuildId)
+				m.play(p.stateMachine.state, pr, p.debug)
+				if isSyncCall {
+					hasAudience = m.hasAudience(p.discordSession, p.discordGuildId)
+				}
 			})
 
-			if !hasAudience {
-				p.notifyNoAudience(s.sig)
-				return nil
-			}
+			if isSyncCall {
+				if !hasAudience {
+					p.notifyNoAudience(s.sig)
+					return nil
+				}
 
-			p.stateMachine.state = StatePlaying
+				p.setState(StatePlaying)
+			}
+			// else stay in the idle state
 		case SignalResume:
-			p.stateMachine.state = StatePlaying
+			p.setState(StatePlaying)
 		case SignalNext:
 			// do nothing, let loop normally advance
 		case SignalPrevious:
@@ -868,7 +1005,7 @@ func (p *Player) playerStateMachine() error {
 
 		p.debug().Msg("player: not playing")
 
-		p.stateMachine.state = StateIdle
+		p.setState(StateIdle)
 
 		return nil
 	}
@@ -880,7 +1017,7 @@ func (p *Player) playerStateMachine() error {
 
 			p.debug().Msg("player: trying to play, but no broadcast channel is ready")
 
-			p.stateMachine.state = StateIdle
+			p.setState(StateIdle)
 
 			return nil
 		}
@@ -888,7 +1025,7 @@ func (p *Player) playerStateMachine() error {
 
 	track := p.nextTrack()
 	if track == nil {
-		p.stateMachine.state = StateIdle
+		p.setState(StateIdle)
 		return nil
 	} else {
 
@@ -957,11 +1094,11 @@ func (p *Player) playerStateMachine() error {
 				return nil
 			case SignalStop:
 				p.restartTrack()
-				p.stateMachine.state = StateIdle
+				p.setState(StateIdle)
 				return nil
 			case SignalReset:
 				p.reset()
-				p.stateMachine.state = StateIdle
+				p.setState(StateIdle)
 				return nil
 			case SignalNext:
 				return nil
@@ -969,7 +1106,7 @@ func (p *Player) playerStateMachine() error {
 				p.restartTrack()
 				return nil
 			case SignalPause:
-				p.stateMachine.state = StatePaused
+				p.setState(StatePaused)
 
 			PausedLoop:
 				for {
@@ -986,35 +1123,41 @@ func (p *Player) playerStateMachine() error {
 					case SignalNewVoiceConnection:
 						sendChan = nil
 					case SignalPlay:
+
+						pr := s.signalPayload.(*playRequest)
+						isSyncCall := p.stateUnchangedSince(pr.pslc)
+
 						p.withMemory(func(m *PlayerMemory) {
-							m.play(p.stateMachine.state, s.signalPayload.(*playRequest), p.debug)
+							m.play(p.stateMachine.state, pr, p.debug)
 						})
 
-						broadcastMsg := "player is paused; to resume playback send the following message:\n\n" +
-							p.discordSession.State.User.Mention() + " resume"
+						if isSyncCall {
+							broadcastMsg := "player is paused; to resume playback send the following message:\n\n" +
+								p.discordSession.State.User.Mention() + " resume"
 
-						p.broadcastTextMessage(broadcastMsg)
+							p.broadcastTextMessage(broadcastMsg)
+						}
 					case SignalPrevious:
 						p.previousTrack(1) // current track is paused
-						p.stateMachine.state = StateIdle
+						p.setState(StateIdle)
 						return nil
 					case SignalNext:
-						p.stateMachine.state = StateIdle
+						p.setState(StateIdle)
 						return nil
 					case SignalStop:
 						p.restartTrack()
-						p.stateMachine.state = StateIdle
+						p.setState(StateIdle)
 						return nil
 					case SignalRestartTrack:
 						p.restartTrack()
-						p.stateMachine.state = StateIdle
+						p.setState(StateIdle)
 						return nil
 					case SignalReset:
 						p.reset()
-						p.stateMachine.state = StateIdle
+						p.setState(StateIdle)
 						return nil
 					case SignalResume:
-						p.stateMachine.state = StatePlaying
+						p.setState(StatePlaying)
 						break PausedLoop
 					}
 				}
