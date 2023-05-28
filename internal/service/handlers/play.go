@@ -662,7 +662,7 @@ func processPlaylist(ctx context.Context, s *discordgo.Session, m *discordgo.Mes
 
 			var numFailed, numSuccess int
 			for _, v := range pl.Videos {
-				if ctx.Err() != nil {
+				if err := ctx.Err(); err != nil {
 					return err
 				}
 
@@ -684,7 +684,7 @@ func processPlaylist(ctx context.Context, s *discordgo.Session, m *discordgo.Mes
 
 				numSuccess += 1
 
-				if ctx.Err() != nil {
+				if err := ctx.Err(); err != nil {
 					return err
 				}
 
