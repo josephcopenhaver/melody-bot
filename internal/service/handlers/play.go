@@ -487,11 +487,10 @@ func handlePlayRequest(ctx context.Context, s *discordgo.Session, m *discordgo.M
 
 	p.Enqueue(playPack)
 
-	var play func(as *audioStream)
+	var play func(ctx context.Context, as *audioStream)
 	{
-		ctxDone := ctx.Done()
 		mention := m.Author.Mention()
-		play = func(as *audioStream) {
+		play = func(ctx context.Context, as *audioStream) {
 			as.pid = pid
 			as.pslc = pslc
 			pc := service.PlayCall{
@@ -500,6 +499,8 @@ func handlePlayRequest(ctx context.Context, s *discordgo.Session, m *discordgo.M
 				AuthorMention: mention,
 				AudioStreamer: as,
 			}
+
+			ctxDone := ctx.Done()
 			select {
 			case <-ctxDone:
 				return
@@ -551,7 +552,7 @@ func handlePlayRequest(ctx context.Context, s *discordgo.Session, m *discordgo.M
 
 var ErrPanicInPlaylistLoader = errors.New("Panic in playlist loader")
 
-func processPlaylist(ctx context.Context, s *discordgo.Session, m *discordgo.MessageCreate, p *service.Player, play func(*audioStream), closePlayPack func(), urlStr string) (bool, error) {
+func processPlaylist(ctx context.Context, s *discordgo.Session, m *discordgo.MessageCreate, p *service.Player, play func(context.Context, *audioStream), closePlayPack func(), urlStr string) (bool, error) {
 	var result bool
 
 	ac := newYoutubeApiClient()
@@ -687,7 +688,7 @@ func processPlaylist(ctx context.Context, s *discordgo.Session, m *discordgo.Mes
 					return err
 				}
 
-				play(as)
+				play(ctx, as)
 			}
 
 			if numFailed > 0 {
@@ -704,7 +705,7 @@ func processPlaylist(ctx context.Context, s *discordgo.Session, m *discordgo.Mes
 	return result, nil
 }
 
-func playAfterTranscode(ctx context.Context, s *discordgo.Session, m *discordgo.MessageCreate, p *service.Player, play func(*audioStream), urlStr string) error {
+func playAfterTranscode(ctx context.Context, s *discordgo.Session, m *discordgo.MessageCreate, p *service.Player, play func(context.Context, *audioStream), urlStr string) error {
 
 	if urlStr == "" {
 		return nil
@@ -736,7 +737,7 @@ func playAfterTranscode(ctx context.Context, s *discordgo.Session, m *discordgo.
 		return err
 	}
 
-	play(as)
+	play(ctx, as)
 
 	return nil
 }
