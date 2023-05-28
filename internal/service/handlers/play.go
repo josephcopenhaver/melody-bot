@@ -49,6 +49,7 @@ func Play() HandleMessageCreate {
 
 type audioStream struct {
 	pid              service.PlaylistID
+	pslc             time.Time
 	srcVideoUrlStr   string
 	size             int64
 	ytApiClient      *youtube.Client
@@ -111,6 +112,11 @@ func (rc *readCloser) Close() error {
 func (as *audioStream) PlaylistID() string {
 	return as.pid.String()
 }
+
+func (as *audioStream) PlayerStateLastChangedAt() time.Time {
+	return as.pslc
+}
+
 func (as *audioStream) SrcUrlStr() string {
 	return as.srcVideoUrlStr
 }
@@ -473,6 +479,7 @@ func newYoutubeDownloadClient() *youtube.Client {
 
 func handlePlayRequest(ctx context.Context, s *discordgo.Session, m *discordgo.MessageCreate, p *service.Player, args map[string]string) error {
 	pid := p.PlaylistID()
+	pslc := p.StateLastChangedAt()
 
 	urlStr := args["url"]
 
@@ -486,6 +493,7 @@ func handlePlayRequest(ctx context.Context, s *discordgo.Session, m *discordgo.M
 		mention := m.Author.Mention()
 		play = func(as *audioStream) {
 			as.pid = pid
+			as.pslc = pslc
 			pc := service.PlayCall{
 				MessageCreate: m,
 				AuthorID:      m.Message.Author.ID,

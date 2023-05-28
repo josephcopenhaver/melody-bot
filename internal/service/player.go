@@ -9,6 +9,7 @@ import (
 	"io"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/josephcopenhaver/gopus"
 	"github.com/rs/zerolog"
@@ -90,6 +91,7 @@ type AudioStreamer interface {
 	SrcUrlStr() string
 	Cached() bool
 	PlaylistID() string
+	PlayerStateLastChangedAt() time.Time
 }
 
 type Track struct {
@@ -100,8 +102,8 @@ type Track struct {
 }
 
 type playRequest struct {
-	track      *Track
-	isSyncCall bool
+	track *Track
+	pslc  time.Time
 }
 
 type Playlist struct {
@@ -237,7 +239,23 @@ func (m *PlayerMemory) hasAudience(s *discordgo.Session, guildId string) bool {
 }
 
 type PlayerStateMachine struct {
-	state State
+	rwMutex            *sync.RWMutex
+	createdAt          time.Time
+	stateLastChangedAt time.Time
+	state              State
+}
+
+func newPlayerStateMachine(rwm *sync.RWMutex) PlayerStateMachine {
+	now := time.Now()
+	if rwm == nil {
+		rwm = &sync.RWMutex{}
+	}
+	return PlayerStateMachine{
+		rwMutex:            rwm,
+		createdAt:          now,
+		stateLastChangedAt: now,
+		state:              StateDefault,
+	}
 }
 
 type PlayCall struct {
@@ -270,11 +288,9 @@ func NewPlayer(ctx context.Context, wg *sync.WaitGroup, s *discordgo.Session, gu
 		discordSession: s,
 		discordGuildId: guildId,
 		signalChan:     make(chan TracedSignal, 1),
-		stateMachine: PlayerStateMachine{
-			state: StateDefault,
-		},
-		cancelFuncs: map[*func(error)]struct{}{},
-		playPacks:   make(chan (<-chan PlayCall)),
+		stateMachine:   newPlayerStateMachine(nil),
+		cancelFuncs:    map[*func(error)]struct{}{},
+		playPacks:      make(chan (<-chan PlayCall)),
 	}
 
 	p.memory.Store(PlayerMemory{
@@ -288,6 +304,44 @@ func NewPlayer(ctx context.Context, wg *sync.WaitGroup, s *discordgo.Session, gu
 	go p.playPackGoroutine(wg)
 
 	return p
+}
+
+func (p *Player) setState(s State) {
+	sm := &p.stateMachine
+
+	sm.rwMutex.RLock()
+	cleanup := sm.rwMutex.RUnlock
+	defer func() {
+		if f := cleanup; f != nil {
+			cleanup = nil
+			f()
+		}
+	}()
+
+	oldState := sm.state
+	if s == oldState {
+		return
+	}
+
+	cleanup()
+
+	sm.rwMutex.Lock()
+	cleanup = sm.rwMutex.Unlock
+
+	// redo read condition check as state may have changed when lock was released and re-acquired for W mode
+	oldState = sm.state
+	if s == oldState {
+		return
+	}
+
+	sm.state = s
+	now := time.Now()
+
+	if oldState == StateDefault {
+		return
+	}
+
+	sm.stateLastChangedAt = now
 }
 
 func (p *Player) RegisterCanceler(fp *func(error)) {
@@ -350,6 +404,16 @@ func (p *Player) PlaylistID() PlaylistID {
 	})
 
 	return result
+}
+
+func (p *Player) StateLastChangedAt() time.Time {
+	p.stateMachine.rwMutex.RLock()
+	defer p.stateMachine.rwMutex.RUnlock()
+	return p.stateMachine.stateLastChangedAt
+}
+
+func (p *Player) stateUnchangedSince(t time.Time) bool {
+	return p.stateMachine.stateLastChangedAt.Compare(t) == 0
 }
 
 func (p *Player) withCancelLock(f func(m map[*func(error)]struct{})) {
@@ -742,7 +806,6 @@ func (p *Player) playPackGoroutine(wg *sync.WaitGroup) {
 				continue
 			}
 
-			isFirst := true
 			for v := range playPackChan {
 				as := v.AudioStreamer
 
@@ -753,9 +816,8 @@ func (p *Player) playPackGoroutine(wg *sync.WaitGroup) {
 						AuthorId:      v.AuthorID,
 						AuthorMention: v.AuthorMention,
 					},
-					isSyncCall: isFirst,
+					pslc: as.PlayerStateLastChangedAt(),
 				}
-				isFirst = false
 
 				p.withMemory(func(m *PlayerMemory) {
 					if as.PlaylistID() != m.id.String() {
@@ -795,9 +857,7 @@ func (p *Player) playerGoroutine(wg *sync.WaitGroup) {
 			defer func() {
 				if r := recover(); r != nil {
 					prevState := p.stateMachine.state
-					p.stateMachine = PlayerStateMachine{
-						state: StateDefault,
-					}
+					p.stateMachine = newPlayerStateMachine(p.stateMachine.rwMutex)
 					p.reset()
 					evt := log.Error()
 					if e, ok := r.(error); ok {
@@ -866,25 +926,26 @@ func (p *Player) playerStateMachine() error {
 			hasAudience := false
 
 			pr := s.signalPayload.(*playRequest)
+			isSyncCall := p.stateUnchangedSince(pr.pslc)
 
 			p.withMemory(func(m *PlayerMemory) {
 				m.play(p.stateMachine.state, pr, p.debug)
-				if pr.isSyncCall {
+				if isSyncCall {
 					hasAudience = m.hasAudience(p.discordSession, p.discordGuildId)
 				}
 			})
 
-			if pr.isSyncCall {
+			if isSyncCall {
 
 				if !hasAudience {
 					p.notifyNoAudience(s.sig)
-					p.stateMachine.state = StateIdle
+					p.setState(StateIdle)
 					return nil
 				}
 
-				p.stateMachine.state = StatePlaying
+				p.setState(StatePlaying)
 			} else {
-				p.stateMachine.state = StateIdle
+				p.setState(StateIdle)
 			}
 		}
 	case StateIdle:
@@ -905,31 +966,32 @@ func (p *Player) playerStateMachine() error {
 			sendChan = nil
 		case SignalReset:
 			p.reset()
-			p.stateMachine.state = StateIdle
+			p.setState(StateIdle)
 			return nil
 		case SignalPlay:
 			hasAudience := false
 
 			pr := s.signalPayload.(*playRequest)
+			isSyncCall := p.stateUnchangedSince(pr.pslc)
 
 			p.withMemory(func(m *PlayerMemory) {
 				m.play(p.stateMachine.state, pr, p.debug)
-				if pr.isSyncCall {
+				if isSyncCall {
 					hasAudience = m.hasAudience(p.discordSession, p.discordGuildId)
 				}
 			})
 
-			if pr.isSyncCall {
+			if isSyncCall {
 				if !hasAudience {
 					p.notifyNoAudience(s.sig)
 					return nil
 				}
 
-				p.stateMachine.state = StatePlaying
+				p.setState(StatePlaying)
 			}
 			// else stay in the idle state
 		case SignalResume:
-			p.stateMachine.state = StatePlaying
+			p.setState(StatePlaying)
 		case SignalNext:
 			// do nothing, let loop normally advance
 		case SignalPrevious:
@@ -943,7 +1005,7 @@ func (p *Player) playerStateMachine() error {
 
 		p.debug().Msg("player: not playing")
 
-		p.stateMachine.state = StateIdle
+		p.setState(StateIdle)
 
 		return nil
 	}
@@ -955,7 +1017,7 @@ func (p *Player) playerStateMachine() error {
 
 			p.debug().Msg("player: trying to play, but no broadcast channel is ready")
 
-			p.stateMachine.state = StateIdle
+			p.setState(StateIdle)
 
 			return nil
 		}
@@ -963,7 +1025,7 @@ func (p *Player) playerStateMachine() error {
 
 	track := p.nextTrack()
 	if track == nil {
-		p.stateMachine.state = StateIdle
+		p.setState(StateIdle)
 		return nil
 	} else {
 
@@ -1032,11 +1094,11 @@ func (p *Player) playerStateMachine() error {
 				return nil
 			case SignalStop:
 				p.restartTrack()
-				p.stateMachine.state = StateIdle
+				p.setState(StateIdle)
 				return nil
 			case SignalReset:
 				p.reset()
-				p.stateMachine.state = StateIdle
+				p.setState(StateIdle)
 				return nil
 			case SignalNext:
 				return nil
@@ -1044,7 +1106,7 @@ func (p *Player) playerStateMachine() error {
 				p.restartTrack()
 				return nil
 			case SignalPause:
-				p.stateMachine.state = StatePaused
+				p.setState(StatePaused)
 
 			PausedLoop:
 				for {
@@ -1063,12 +1125,13 @@ func (p *Player) playerStateMachine() error {
 					case SignalPlay:
 
 						pr := s.signalPayload.(*playRequest)
+						isSyncCall := p.stateUnchangedSince(pr.pslc)
 
 						p.withMemory(func(m *PlayerMemory) {
 							m.play(p.stateMachine.state, pr, p.debug)
 						})
 
-						if pr.isSyncCall {
+						if isSyncCall {
 							broadcastMsg := "player is paused; to resume playback send the following message:\n\n" +
 								p.discordSession.State.User.Mention() + " resume"
 
@@ -1076,25 +1139,25 @@ func (p *Player) playerStateMachine() error {
 						}
 					case SignalPrevious:
 						p.previousTrack(1) // current track is paused
-						p.stateMachine.state = StateIdle
+						p.setState(StateIdle)
 						return nil
 					case SignalNext:
-						p.stateMachine.state = StateIdle
+						p.setState(StateIdle)
 						return nil
 					case SignalStop:
 						p.restartTrack()
-						p.stateMachine.state = StateIdle
+						p.setState(StateIdle)
 						return nil
 					case SignalRestartTrack:
 						p.restartTrack()
-						p.stateMachine.state = StateIdle
+						p.setState(StateIdle)
 						return nil
 					case SignalReset:
 						p.reset()
-						p.stateMachine.state = StateIdle
+						p.setState(StateIdle)
 						return nil
 					case SignalResume:
-						p.stateMachine.state = StatePlaying
+						p.setState(StatePlaying)
 						break PausedLoop
 					}
 				}
