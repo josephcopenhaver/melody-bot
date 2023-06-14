@@ -49,6 +49,7 @@ RUN export DEBIAN_FRONTEND=noninteractive \
 RUN export DEBIAN_FRONTEND=noninteractive \
     && apt-get update \
     && apt-get install -y \
+    mandoc \
     unzip \
     python3 \
     python3-pip \
@@ -64,10 +65,10 @@ RUN export DEBIAN_FRONTEND=noninteractive \
         && cd /tmp/awscli \
         && unzip awscliv2.zip \
         && ./aws/install \
-        && aws --help \
+        && aws --version \
         && cd /tmp \
         && rm -rf awscli \
-        true \
+        && true \
     ) \
     && true
 
