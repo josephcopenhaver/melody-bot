@@ -10,6 +10,7 @@ services:
       - $PWD/secrets/$ENV.env
     volumes:
       - $PWD/.media-cache:/workspace/.media-cache
+      - $PWD/.media-meta-cache:/workspace/.media-meta-cache
     networks:
       - infrastructure
       - frontend

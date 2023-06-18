@@ -323,7 +323,10 @@ func (p *Player) setState(s State) {
 		return
 	}
 
-	cleanup()
+	if f := cleanup; f != nil {
+		cleanup = nil
+		f()
+	}
 
 	sm.rwMutex.Lock()
 	cleanup = sm.rwMutex.Unlock
