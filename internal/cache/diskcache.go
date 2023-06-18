@@ -12,6 +12,7 @@ import (
 	"io/fs"
 	"os"
 	"path"
+	"reflect"
 	"strings"
 	"sync"
 	"time"
@@ -140,18 +141,18 @@ func (c *DiskCache[K, V]) Set(k K, v V) error {
 	oldV, ok := c.m[k]
 
 	if c.maxSize > 0 {
-		if !ok {
-			c.prepForNewRecord()
-		}
 
 		var createdAt time.Time
 		var lastReadAt *time.Time
 		var lastReadAtLock *sync.Mutex
 		if ok {
+
 			createdAt = oldV.createdAt
 			lastReadAtLock = oldV.lastReadAtLock
 			lastReadAt = oldV.lastReadAt
 		} else {
+			c.prepForNewRecord()
+
 			createdAt = time.Now()
 			lastReadAtLock = &sync.Mutex{}
 			lastReadAt = &time.Time{}
@@ -188,6 +189,8 @@ func (c *DiskCache[K, V]) filePath(k K) (string, error) {
 	var fileKey string
 	switch abstractV := abstractK.(type) {
 	case []byte:
+		fileKey = string(abstractV)
+	case []rune:
 		fileKey = string(abstractV)
 	case string:
 		fileKey = string(abstractV)
@@ -248,6 +251,24 @@ func (c *DiskCache[K, V]) valueToBytes(v V) ([]byte, error) {
 		return zip(b)
 	}
 
+	switch tv := av.(type) {
+	case []byte:
+		if !c.zipEnabled {
+			return tv, nil
+		}
+		return zip(tv)
+	case []rune:
+		if !c.zipEnabled {
+			return []byte(string(tv)), nil
+		}
+		return zip([]byte(string(tv)))
+	case string:
+		if !c.zipEnabled {
+			return []byte(tv), nil
+		}
+		return zip([]byte(tv))
+	}
+
 	var buf bytes.Buffer
 	enc := json.NewEncoder(&buf)
 	enc.SetEscapeHTML(false)
@@ -267,34 +288,38 @@ func (c *DiskCache[K, V]) bytesToValue(b []byte) (V, error) {
 	var result V
 	var buf V
 
-	{
-		av := any(&buf)
+	var av any
+	vIsPointerType := isPointerType(buf)
+	if !vIsPointerType {
+		av = any(&buf)
+	} else {
+		av = any(buf)
+	}
 
-		if v, ok := av.(binarySerializer); ok {
-			if err := v.UnmarshalBinary(b); err != nil {
-				return result, err
-			}
-
-			result = buf
-			return result, nil
+	if v, ok := av.(binarySerializer); ok {
+		if err := v.UnmarshalBinary(b); err != nil {
+			return result, err
 		}
 
-		if v, ok := av.(textSerializer); ok {
-			if c.zipEnabled {
-				if v, err := unzip(b); err != nil {
-					return result, err
-				} else {
-					b = v
-				}
-			}
+		result = buf
+		return result, nil
+	}
 
-			if err := v.UnmarshalText(b); err != nil {
+	if v, ok := av.(textSerializer); ok {
+		if c.zipEnabled {
+			if v, err := unzip(b); err != nil {
 				return result, err
+			} else {
+				b = v
 			}
-
-			result = buf
-			return result, nil
 		}
+
+		if err := v.UnmarshalText(b); err != nil {
+			return result, err
+		}
+
+		result = buf
+		return result, nil
 	}
 
 	if c.zipEnabled {
@@ -302,6 +327,20 @@ func (c *DiskCache[K, V]) bytesToValue(b []byte) (V, error) {
 			return result, err
 		} else {
 			b = v
+		}
+	}
+
+	if !vIsPointerType {
+		switch x := av.(type) {
+		case *[]byte:
+			reflect.ValueOf(x).Elem().Set(reflect.ValueOf(b))
+			return buf, nil
+		case *[]rune:
+			reflect.ValueOf(x).Elem().Set(reflect.ValueOf([]rune(string(b))))
+			return buf, nil
+		case *string:
+			reflect.ValueOf(x).Elem().Set(reflect.ValueOf(string(b)))
+			return buf, nil
 		}
 	}
 
@@ -481,4 +520,8 @@ func unzip(b []byte) ([]byte, error) {
 	}
 
 	return res, nil
+}
+
+func isPointerType(x any) bool {
+	return (reflect.ValueOf(x).Type().Kind() == reflect.Pointer)
 }
