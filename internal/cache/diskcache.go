@@ -2,6 +2,7 @@ package cache
 
 import (
 	"bytes"
+	"compress/gzip"
 	"encoding"
 	"encoding/base64"
 	"encoding/json"
@@ -34,14 +35,15 @@ type diskCacheMemRecord[V any] struct {
 }
 
 type DiskCache[K comparable, V any] struct {
-	basePath string
-	rwm      sync.RWMutex
-	m        map[K]diskCacheMemRecord[V]
-	maxSize  int
-	size     int
+	basePath   string
+	rwm        sync.RWMutex
+	m          map[K]diskCacheMemRecord[V]
+	maxSize    int
+	size       int
+	zipEnabled bool
 }
 
-func NewDiskCache[K comparable, V any](path string, maxSize int) (*DiskCache[K, V], error) {
+func NewDiskCache[K comparable, V any](path string, maxSize int, zipEnabled bool) (*DiskCache[K, V], error) {
 	if maxSize < 0 {
 		maxSize = 0
 	}
@@ -59,9 +61,10 @@ func NewDiskCache[K comparable, V any](path string, maxSize int) (*DiskCache[K, 
 	}
 
 	return &DiskCache[K, V]{
-		basePath: path,
-		m:        make(map[K]diskCacheMemRecord[V], maxSize),
-		maxSize:  maxSize,
+		basePath:   path,
+		m:          make(map[K]diskCacheMemRecord[V], maxSize),
+		maxSize:    maxSize,
+		zipEnabled: zipEnabled,
 	}, nil
 }
 
@@ -233,7 +236,16 @@ func (c *DiskCache[K, V]) valueToBytes(v V) ([]byte, error) {
 	}
 
 	if vm, ok := av.(textSerializer); ok {
-		return vm.MarshalText()
+		b, err := vm.MarshalText()
+		if err != nil {
+			return nil, err
+		}
+
+		if !c.zipEnabled {
+			return b, nil
+		}
+
+		return zip(b)
 	}
 
 	var buf bytes.Buffer
@@ -244,7 +256,11 @@ func (c *DiskCache[K, V]) valueToBytes(v V) ([]byte, error) {
 		return nil, err
 	}
 
-	return buf.Bytes(), nil
+	if !c.zipEnabled {
+		return buf.Bytes(), nil
+	}
+
+	return zip(buf.Bytes())
 }
 
 func (c *DiskCache[K, V]) bytesToValue(b []byte) (V, error) {
@@ -264,12 +280,28 @@ func (c *DiskCache[K, V]) bytesToValue(b []byte) (V, error) {
 		}
 
 		if v, ok := av.(textSerializer); ok {
+			if c.zipEnabled {
+				if v, err := unzip(b); err != nil {
+					return result, err
+				} else {
+					b = v
+				}
+			}
+
 			if err := v.UnmarshalText(b); err != nil {
 				return result, err
 			}
 
 			result = buf
 			return result, nil
+		}
+	}
+
+	if c.zipEnabled {
+		if v, err := unzip(b); err != nil {
+			return result, err
+		} else {
+			b = v
 		}
 	}
 
@@ -419,4 +451,34 @@ func fileExistsOnDisk(path string) (bool, error) {
 	}
 
 	return true, nil
+}
+
+func zip(b []byte) ([]byte, error) {
+	var buf bytes.Buffer
+	w := gzip.NewWriter(&buf)
+
+	if _, err := w.Write(b); err != nil {
+		return nil, err
+	}
+
+	if err := w.Close(); err != nil {
+		return nil, err
+	}
+
+	return buf.Bytes(), nil
+}
+
+func unzip(b []byte) ([]byte, error) {
+
+	r, err := gzip.NewReader(bytes.NewReader(b))
+	if err != nil {
+		return nil, err
+	}
+
+	res, err := io.ReadAll(r)
+	if err != nil {
+		return nil, err
+	}
+
+	return res, nil
 }

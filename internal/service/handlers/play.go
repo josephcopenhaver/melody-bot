@@ -43,7 +43,7 @@ type MediaMetaCacheEntry struct {
 var vidMetadataCache *cache.DiskCache[string, MediaMetaCacheEntry]
 
 func init() {
-	if v, err := cache.NewDiskCache[string, MediaMetaCacheEntry](MediaMetadataCacheDir, MediaMetadataCacheSize); err != nil {
+	if v, err := cache.NewDiskCache[string, MediaMetaCacheEntry](MediaMetadataCacheDir, MediaMetadataCacheSize, false); err != nil {
 		panic(err)
 	} else {
 		vidMetadataCache = v
