@@ -1,3 +1,4 @@
 ./.docker-volumes
 ./.devcontainer/cache
 ./.media-cache
+./.media-meta-cache

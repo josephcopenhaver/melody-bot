@@ -23,13 +23,32 @@ import (
 	"github.com/bwmarrin/discordgo"
 	"github.com/kkdai/youtube/v2"
 
+	"github.com/josephcopenhaver/melody-bot/internal/cache"
 	"github.com/josephcopenhaver/melody-bot/internal/service"
 	"github.com/josephcopenhaver/melody-bot/internal/service/server/reactions"
 )
 
 const (
-	MediaCacheDir = ".media-cache/v1"
+	MediaCacheDir          = ".media-cache/v1"
+	MediaMetadataCacheDir  = ".media-meta-cache/v1"
+	MediaMetadataCacheSize = 1024 * 1024
 )
+
+type MediaMetaCacheEntry struct {
+	VideoID string         `json:"video_id"`
+	Format  youtube.Format `json:"format"`
+	Size    int64          `json:"size"`
+}
+
+var vidMetadataCache *cache.DiskCache[string, MediaMetaCacheEntry]
+
+func init() {
+	if v, err := cache.NewDiskCache[string, MediaMetaCacheEntry](MediaMetadataCacheDir, MediaMetadataCacheSize, false); err != nil {
+		panic(err)
+	} else {
+		vidMetadataCache = v
+	}
+}
 
 // TODO: handle voice channel reconnects forced by the server, specifically when forced into a channel where no one is present
 
@@ -128,43 +147,47 @@ func (as *audioStream) SelectDownloadURL(ctx context.Context) error {
 		return nil
 	}
 
-	ytVid, err := as.ytApiClient.GetVideoContext(ctx, as.srcVideoUrlStr)
+	var ytVid *youtube.Video
+	cacheV, ok, err := vidMetadataCache.Get(as.srcVideoUrlStr)
 	if err != nil {
-		log.Err(err).Msg("failed to get video context")
 		return err
 	}
 
-	cacheDir := path.Join(MediaCacheDir, ytVid.ID)
-	cachedRef := path.Join(cacheDir, "audio.s16le")
+	if ok {
+		ytVid = &youtube.Video{ID: cacheV.VideoID}
+		as.size = cacheV.Size
+		fmt := cacheV.Format
+		as.Format = &fmt
+	} else {
 
-	formats := ytVid.Formats.Type("video/mp4")
-	formats.Sort()
-
-	for _, f := range formats {
-
-		if f.AudioChannels <= 0 {
-			continue
-		}
-
-		// TODO: in the future try to select the lowest bitrate
-		// if dstFormat != nil {
-		// 	if dstFormat.Bitrate <= f.Bitrate {
-		// 		continue
-		// 	}
-		// }
-
-		n := f
-
-		newReader, newSize, err := as.ytApiClient.GetStreamContext(ctx, ytVid, &n)
+		ytVid, err = as.ytApiClient.GetVideoContext(ctx, as.srcVideoUrlStr)
 		if err != nil {
-			continue
+			log.Err(err).Msg("failed to get video context")
+			return err
 		}
-		if newReader != nil {
-			newReader.Close()
-		}
-		if newSize == 0 {
-			// try again, there is a bug in the client implementation
-			newReader, newSize, err = as.ytApiClient.GetStreamContext(ctx, ytVid, &n)
+
+		formats := ytVid.Formats.Type("video/mp4")
+		formats.Sort()
+
+		ytVid = &youtube.Video{ID: ytVid.ID}
+
+		for i := len(formats) - 1; i >= 0; i-- {
+			f := formats[i]
+
+			if f.AudioChannels <= 0 {
+				continue
+			}
+
+			// TODO: in the future try to select the lowest bitrate
+			// if dstFormat != nil {
+			// 	if dstFormat.Bitrate <= f.Bitrate {
+			// 		continue
+			// 	}
+			// }
+
+			n := f
+
+			newReader, newSize, err := as.ytApiClient.GetStreamContext(ctx, ytVid, &n)
 			if err != nil {
 				continue
 			}
@@ -172,28 +195,55 @@ func (as *audioStream) SelectDownloadURL(ctx context.Context) error {
 				newReader.Close()
 			}
 			if newSize == 0 {
-				log.Error().
-					Str("video_url", as.srcVideoUrlStr).
-					Str("format_url", f.URL).
-					Msg("stream size consistently returned zero bytes which should be impossible")
-				continue
+				// try again, there is a bug in the client implementation
+				newReader, newSize, err = as.ytApiClient.GetStreamContext(ctx, ytVid, &n)
+				if err != nil {
+					continue
+				}
+				if newReader != nil {
+					newReader.Close()
+				}
+				if newSize == 0 {
+					log.Error().
+						Str("video_url", as.srcVideoUrlStr).
+						Str("format_url", f.URL).
+						Msg("stream size consistently returned zero bytes which should be impossible")
+					continue
+				}
 			}
+
+			// choose this stream format
+
+			as.size = newSize
+			as.Format = &n
+
+			break
 		}
 
-		// choose this stream format
-
-		as.size = newSize
-		as.Format = &n
+		if as.Format == nil {
+			log.Error().Int("search_count", len(formats)).Msg("failed to find a usable video format")
+			return fmt.Errorf("failed to find a usable video format, searched %d", len(formats))
+		}
 	}
 
-	if as.Format == nil {
-		log.Error().Int("search_count", len(formats)).Msg("failed to find a usable video format")
-		return fmt.Errorf("failed to find a usable video format, searched %d", len(formats))
-	}
+	cacheDir := path.Join(MediaCacheDir, ytVid.ID)
+	cachedRef := path.Join(cacheDir, "audio.s16le")
 
 	// write new values to internal state
 	as.dstFilePath = cachedRef
 	as.Video = ytVid
+
+	if err := vidMetadataCache.Set(as.srcVideoUrlStr, MediaMetaCacheEntry{
+		VideoID: ytVid.ID,
+		Format:  *as.Format,
+		Size:    as.size,
+	}); err != nil {
+		log.Error().
+			Err(err).
+			Str("key", as.srcVideoUrlStr).
+			Interface("VideoFormat", *as.Format).
+			Msg("failed to save a video metadata cache entry")
+	}
 
 	log.Debug().
 		Str("ID", as.ID).
@@ -355,6 +405,16 @@ func (as *audioStream) ReadCloser(ctx context.Context, wg *sync.WaitGroup) (io.R
 				f = nil
 				v.Close()
 			}
+
+			as.Video = nil
+			as.size = 0
+			as.Format = nil
+
+			if err := vidMetadataCache.Delete(as.srcVideoUrlStr); err != nil {
+				setErr(err)
+				return
+			}
+
 			if err := as.SelectDownloadURL(ctx); err != nil {
 				setErr(err)
 				return
@@ -671,6 +731,7 @@ func processPlaylist(ctx context.Context, s *discordgo.Session, m *discordgo.Mes
 					ytApiClient:      ac,
 					ytDownloadClient: newYoutubeDownloadClient(),
 				}
+
 				if err := as.SelectDownloadURL(ctx); err != nil {
 					log.Ctx(ctx).Err(err).
 						Str("track", as.srcVideoUrlStr).
