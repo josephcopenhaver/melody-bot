@@ -43,7 +43,7 @@ type MediaMetaCacheEntry struct {
 var vidMetadataCache *cache.DiskCache[string, MediaMetaCacheEntry]
 
 func init() {
-	if v, err := cache.NewDiskCache[string, MediaMetaCacheEntry](MediaMetadataCacheDir, MediaMetadataCacheSize, false); err != nil {
+	if v, err := cache.NewDiskCache[string, MediaMetaCacheEntry](MediaMetadataCacheDir, MediaMetadataCacheSize); err != nil {
 		panic(err)
 	} else {
 		vidMetadataCache = v
@@ -699,6 +699,8 @@ func processPlaylist(ctx context.Context, s *discordgo.Session, m *discordgo.Mes
 			if err != nil {
 				return fmt.Errorf("failed to download playlist: %w", err)
 			}
+
+			// TODO: cache playlist video urls for playlist url string
 
 			// ensure that the bot is first in a voice channel
 			{

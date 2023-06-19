@@ -2,7 +2,6 @@ package cache
 
 import (
 	"bytes"
-	"compress/gzip"
 	"encoding"
 	"encoding/base64"
 	"encoding/json"
@@ -18,12 +17,180 @@ import (
 	"time"
 )
 
-type binarySerializer interface {
+// TODO: key and value removal could be extended to call some finalizer implementation and signal if it is
+// a ram-record delete, a disk-record delete, or both
+
+type Marshaler[V any] interface {
+	Marshal(V) ([]byte, error)
+}
+
+type Transcoder[V any] interface {
+	Marshaler[V]
+	Unmarshal([]byte) (V, error)
+}
+
+type defaultKeyMarshaler[K comparable] struct{}
+
+func (km *defaultKeyMarshaler[K]) Marshal(k K) ([]byte, error) {
+	ak := any(k)
+
+	var fileKey string
+	switch x := ak.(type) {
+	case []byte:
+		fileKey = string(x)
+	case []rune:
+		fileKey = string(x)
+	case string:
+		fileKey = string(x)
+	default:
+		if v, ok := ak.(encoding.TextMarshaler); ok {
+			val, err := v.MarshalText()
+			if err != nil {
+				return nil, fmt.Errorf("failed to MarshalText: %w", err)
+			}
+
+			fileKey = string(val)
+		} else if v, ok := ak.(encoding.BinaryMarshaler); ok {
+			val, err := v.MarshalBinary()
+			if err != nil {
+				return nil, fmt.Errorf("failed to MarshalBinary: %w", err)
+			}
+
+			fileKey = string(val)
+		} else if v, ok := ak.(json.Marshaler); ok {
+			val, err := v.MarshalJSON()
+			if err != nil {
+				return nil, fmt.Errorf("failed to MarshalJSON: %w", err)
+			}
+
+			fileKey = strings.TrimRight(string(val), "\n")
+		} else {
+			var buf bytes.Buffer
+			enc := json.NewEncoder(&buf)
+			enc.SetEscapeHTML(false)
+			if err := enc.Encode(k); err != nil {
+				return nil, fmt.Errorf("failed to json.Encode: %w", err)
+			}
+
+			fileKey = strings.TrimRight(buf.String(), "\n")
+		}
+	}
+
+	return []byte(fileKey), nil
+}
+
+func newDefaultKeyMarshaler[K comparable]() Marshaler[K] {
+	return &defaultKeyMarshaler[K]{}
+}
+
+type defaultValueTranscoder[V any] struct {
+	valIsPointerType bool
+}
+
+func (vt *defaultValueTranscoder[V]) Marshal(v V) ([]byte, error) {
+	av := any(v)
+
+	if vm, ok := av.(binaryTranscoder); ok {
+		return vm.MarshalBinary()
+	}
+
+	if vm, ok := av.(textTranscoder); ok {
+		b, err := vm.MarshalText()
+		if err != nil {
+			return nil, err
+		}
+
+		return b, nil
+	}
+
+	switch x := av.(type) {
+	case []byte:
+		return x, nil
+	case []rune:
+		return []byte(string(x)), nil
+	case string:
+		return []byte(x), nil
+	}
+
+	var buf bytes.Buffer
+	enc := json.NewEncoder(&buf)
+	enc.SetEscapeHTML(false)
+
+	if err := enc.Encode(v); err != nil {
+		return nil, err
+	}
+
+	return buf.Bytes(), nil
+}
+
+func (vt *defaultValueTranscoder[V]) Unmarshal(b []byte) (V, error) {
+	var result V
+	var buf V
+
+	var av any
+	if !vt.valIsPointerType {
+		av = any(&buf)
+	} else {
+		av = any(buf)
+	}
+
+	if v, ok := av.(binaryTranscoder); ok {
+		if err := v.UnmarshalBinary(b); err != nil {
+			return result, err
+		}
+
+		result = buf
+		return result, nil
+	}
+
+	if v, ok := av.(textTranscoder); ok {
+
+		if err := v.UnmarshalText(b); err != nil {
+			return result, err
+		}
+
+		result = buf
+		return result, nil
+	}
+
+	if !vt.valIsPointerType {
+		switch x := av.(type) {
+		case *[]byte:
+			reflect.ValueOf(x).Elem().Set(reflect.ValueOf(b))
+			result = buf
+			return result, nil
+		case *[]rune:
+			reflect.ValueOf(x).Elem().Set(reflect.ValueOf([]rune(string(b))))
+			result = buf
+			return result, nil
+		case *string:
+			reflect.ValueOf(x).Elem().Set(reflect.ValueOf(string(b)))
+			result = buf
+			return result, nil
+		}
+	}
+
+	if err := json.Unmarshal(b, &buf); err != nil {
+		return result, err
+	}
+
+	result = buf
+	return result, nil
+}
+
+func newDefaultValueTranscoder[V any]() Transcoder[V] {
+	var v V
+	return &defaultValueTranscoder[V]{
+		valIsPointerType: (reflect.ValueOf(v).Type().Kind() == reflect.Pointer),
+	}
+}
+
+type binaryTranscoder interface {
 	encoding.BinaryMarshaler
 	encoding.BinaryUnmarshaler
 }
 
-type textSerializer interface {
+type textTranscoder interface {
 	encoding.TextMarshaler
 	encoding.TextUnmarshaler
 }
@@ -36,15 +203,38 @@ type diskCacheMemRecord[V any] struct {
 }
 
 type DiskCache[K comparable, V any] struct {
-	basePath   string
-	rwm        sync.RWMutex
-	m          map[K]diskCacheMemRecord[V]
-	maxSize    int
-	size       int
-	zipEnabled bool
+	basePath      string
+	rwm           sync.RWMutex
+	m             map[K]diskCacheMemRecord[V]
+	keyMarshaler  Marshaler[K]
+	valTranscoder Transcoder[V]
+	maxSize       int
+	size          int
 }
 
-func NewDiskCache[K comparable, V any](path string, maxSize int, zipEnabled bool) (*DiskCache[K, V], error) {
+type diskCacheOptions[K comparable, V any] struct {
+	valTranscoder                     Transcoder[V]
+	keyMarshaler                      Marshaler[K]
+	valTranscoderSet, keyMarshalerSet bool
+}
+
+type DiskCacheOption[K comparable, V any] func(*diskCacheOptions[K, V])
+
+func DiskCacheValueTranscoder[K comparable, V any](t Transcoder[V]) DiskCacheOption[K, V] {
+	return func(opt *diskCacheOptions[K, V]) {
+		opt.valTranscoder = t
+		opt.valTranscoderSet = true
+	}
+}
+
+func DiskCacheKeyMarshaler[K comparable, V any](m Marshaler[K]) DiskCacheOption[K, V] {
+	return func(opt *diskCacheOptions[K, V]) {
+		opt.keyMarshaler = m
+		opt.keyMarshalerSet = true
+	}
+}
+
+func NewDiskCache[K comparable, V any](path string, maxSize int, options ...DiskCacheOption[K, V]) (*DiskCache[K, V], error) {
 	if maxSize < 0 {
 		maxSize = 0
 	}
@@ -61,11 +251,26 @@ func NewDiskCache[K comparable, V any](path string, maxSize int, zipEnabled bool
 		return nil, errors.New("existing path is not a directory")
 	}
 
+	cfg := diskCacheOptions[K, V]{}
+
+	for _, op := range options {
+		op(&cfg)
+	}
+
+	if !cfg.keyMarshalerSet {
+		cfg.keyMarshaler = newDefaultKeyMarshaler[K]()
+	}
+
+	if !cfg.valTranscoderSet {
+		cfg.valTranscoder = newDefaultValueTranscoder[V]()
+	}
+
 	return &DiskCache[K, V]{
-		basePath:   path,
-		m:          make(map[K]diskCacheMemRecord[V], maxSize),
-		maxSize:    maxSize,
-		zipEnabled: zipEnabled,
+		basePath:      path,
+		m:             make(map[K]diskCacheMemRecord[V], maxSize),
+		keyMarshaler:  cfg.keyMarshaler,
+		valTranscoder: cfg.valTranscoder,
+		maxSize:       maxSize,
 	}, nil
 }
 
@@ -73,7 +278,13 @@ func (c *DiskCache[K, V]) Get(k K) (V, bool, error) {
 	var result V
 
 	c.rwm.RLock()
-	defer c.rwm.RUnlock()
+	cleanup := c.rwm.RUnlock
+	defer func() {
+		if f := cleanup; f != nil {
+			cleanup = nil
+			f()
+		}
+	}()
 
 	v, ok := c.m[k]
 	if ok {
@@ -90,7 +301,7 @@ func (c *DiskCache[K, V]) Get(k K) (V, bool, error) {
 
 	// check if on disk
 	{
-		fp, err := c.filePath(k)
+		fp, err := c.keyFilePath(k)
 		if err != nil {
 			return result, false, err
 		}
@@ -107,26 +318,30 @@ func (c *DiskCache[K, V]) Get(k K) (V, bool, error) {
 				return result, false, fmt.Errorf("failed to deserialize file contents: %w", err)
 			}
 
+			result = v
+
 			// set back in memory cache
 			if c.maxSize > 0 {
-				defer func() {
-					c.rwm.Lock()
-					defer c.rwm.Unlock()
 
-					c.prepForNewRecord()
+				if f := cleanup; f != nil {
+					cleanup = nil
+					f()
+				}
+				c.rwm.Lock()
+				cleanup = c.rwm.Unlock
 
-					now := time.Now()
-					nowCopy := now
-					c.m[k] = diskCacheMemRecord[V]{
-						createdAt:      now,
-						lastReadAtLock: &sync.Mutex{},
-						lastReadAt:     &nowCopy,
-						value:          v,
-					}
-				}()
+				c.prepForNewRecord()
+
+				now := time.Now()
+				nowCopy := now
+				c.m[k] = diskCacheMemRecord[V]{
+					createdAt:      now,
+					lastReadAtLock: &sync.Mutex{},
+					lastReadAt:     &nowCopy,
+					value:          result,
+				}
 			}
 
-			result = v
 			return result, true, nil
 		}
 	}
@@ -138,9 +353,8 @@ func (c *DiskCache[K, V]) Set(k K, v V) error {
 	c.rwm.Lock()
 	defer c.rwm.Unlock()
 
-	oldV, ok := c.m[k]
-
 	if c.maxSize > 0 {
+		oldV, ok := c.m[k]
 
 		var createdAt time.Time
 		var lastReadAt *time.Time
@@ -170,186 +384,29 @@ func (c *DiskCache[K, V]) Set(k K, v V) error {
 }
 
 func (c *DiskCache[K, V]) saveToDisk(k K, v V) error {
-	fk, err := c.filePath(k)
+	fp, err := c.keyFilePath(k)
 	if err != nil {
 		return fmt.Errorf("failed to encode key: %w", err)
 	}
 
-	valBytes, err := c.valueToBytes(v)
+	b, err := c.valTranscoder.Marshal(v)
 	if err != nil {
 		return fmt.Errorf("failed to encode value: %w", err)
 	}
 
-	return os.WriteFile(path.Join(c.basePath, fk), valBytes, 0600)
+	return os.WriteFile(fp, b, 0600)
 }
 
-func (c *DiskCache[K, V]) filePath(k K) (string, error) {
-	abstractK := any(k)
+func (c *DiskCache[K, V]) keyFilePath(k K) (string, error) {
 
-	var fileKey string
-	switch abstractV := abstractK.(type) {
-	case []byte:
-		fileKey = string(abstractV)
-	case []rune:
-		fileKey = string(abstractV)
-	case string:
-		fileKey = string(abstractV)
-	default:
-		if v, ok := abstractK.(interface{ MarshalText() ([]byte, error) }); ok {
-			val, err := v.MarshalText()
-			if err != nil {
-				return "", fmt.Errorf("failed to MarshalText: %w", err)
-			}
-
-			fileKey = string(val)
-		} else if v, ok := abstractK.(interface{ MarshalBinary() ([]byte, error) }); ok {
-			val, err := v.MarshalBinary()
-			if err != nil {
-				return "", fmt.Errorf("failed to MarshalBinary: %w", err)
-			}
-
-			fileKey = string(val)
-		} else if v, ok := abstractK.(interface{ MarshalJSON() ([]byte, error) }); ok {
-			val, err := v.MarshalJSON()
-			if err != nil {
-				return "", fmt.Errorf("failed to MarshalJSON: %w", err)
-			}
-
-			fileKey = strings.TrimRight(string(val), "\n")
-		} else {
-			var buf bytes.Buffer
-			enc := json.NewEncoder(&buf)
-			enc.SetEscapeHTML(false)
-			if err := enc.Encode(k); err != nil {
-				return "", fmt.Errorf("failed to json.Encode: %w", err)
-			}
-
-			fileKey = strings.TrimRight(buf.String(), "\n")
-		}
+	b, err := c.keyMarshaler.Marshal(k)
+	if err != nil {
+		return "", err
 	}
 
-	return base64.RawURLEncoding.EncodeToString([]byte(fileKey)), nil
-}
+	fileName := base64.RawURLEncoding.EncodeToString(b)
 
-func (c *DiskCache[K, V]) valueToBytes(v V) ([]byte, error) {
-	av := any(v)
-
-	if vm, ok := av.(binarySerializer); ok {
-		return vm.MarshalBinary()
-	}
-
-	if vm, ok := av.(textSerializer); ok {
-		b, err := vm.MarshalText()
-		if err != nil {
-			return nil, err
-		}
-
-		if !c.zipEnabled {
-			return b, nil
-		}
-
-		return zip(b)
-	}
-
-	switch tv := av.(type) {
-	case []byte:
-		if !c.zipEnabled {
-			return tv, nil
-		}
-		return zip(tv)
-	case []rune:
-		if !c.zipEnabled {
-			return []byte(string(tv)), nil
-		}
-		return zip([]byte(string(tv)))
-	case string:
-		if !c.zipEnabled {
-			return []byte(tv), nil
-		}
-		return zip([]byte(tv))
-	}
-
-	var buf bytes.Buffer
-	enc := json.NewEncoder(&buf)
-	enc.SetEscapeHTML(false)
-
-	if err := enc.Encode(v); err != nil {
-		return nil, err
-	}
-
-	if !c.zipEnabled {
-		return buf.Bytes(), nil
-	}
-
-	return zip(buf.Bytes())
-}
-
-func (c *DiskCache[K, V]) bytesToValue(b []byte) (V, error) {
-	var result V
-	var buf V
-
-	var av any
-	vIsPointerType := isPointerType(buf)
-	if !vIsPointerType {
-		av = any(&buf)
-	} else {
-		av = any(buf)
-	}
-
-	if v, ok := av.(binarySerializer); ok {
-		if err := v.UnmarshalBinary(b); err != nil {
-			return result, err
-		}
-
-		result = buf
-		return result, nil
-	}
-
-	if v, ok := av.(textSerializer); ok {
-		if c.zipEnabled {
-			if v, err := unzip(b); err != nil {
-				return result, err
-			} else {
-				b = v
-			}
-		}
-
-		if err := v.UnmarshalText(b); err != nil {
-			return result, err
-		}
-
-		result = buf
-		return result, nil
-	}
-
-	if c.zipEnabled {
-		if v, err := unzip(b); err != nil {
-			return result, err
-		} else {
-			b = v
-		}
-	}
-
-	if !vIsPointerType {
-		switch x := av.(type) {
-		case *[]byte:
-			reflect.ValueOf(x).Elem().Set(reflect.ValueOf(b))
-			return buf, nil
-		case *[]rune:
-			reflect.ValueOf(x).Elem().Set(reflect.ValueOf([]rune(string(b))))
-			return buf, nil
-		case *string:
-			reflect.ValueOf(x).Elem().Set(reflect.ValueOf(string(b)))
-			return buf, nil
-		}
-	}
-
-	if err := json.Unmarshal(b, &buf); err != nil {
-		return result, err
-	}
-
-	result = buf
-	return result, nil
+	return path.Join(c.basePath, fileName), nil
 }
 
 func (c *DiskCache[K, V]) fileToValue(path string) (V, error) {
@@ -366,7 +423,7 @@ func (c *DiskCache[K, V]) fileToValue(path string) (V, error) {
 		return result, err
 	}
 
-	v, err := c.bytesToValue(b)
+	v, err := c.valTranscoder.Unmarshal(b)
 	if err != nil {
 		return result, err
 	}
@@ -385,7 +442,7 @@ func (c *DiskCache[K, V]) Delete(k K) error {
 		}
 	}()
 
-	fp, err := c.filePath(k)
+	fp, err := c.keyFilePath(k)
 	if err != nil {
 		return err
 	}
@@ -490,38 +547,4 @@ func fileExistsOnDisk(path string) (bool, error) {
 	}
 
 	return true, nil
-}
-
-func zip(b []byte) ([]byte, error) {
-	var buf bytes.Buffer
-	w := gzip.NewWriter(&buf)
-
-	if _, err := w.Write(b); err != nil {
-		return nil, err
-	}
-
-	if err := w.Close(); err != nil {
-		return nil, err
-	}
-
-	return buf.Bytes(), nil
-}
-
-func unzip(b []byte) ([]byte, error) {
-
-	r, err := gzip.NewReader(bytes.NewReader(b))
-	if err != nil {
-		return nil, err
-	}
-
-	res, err := io.ReadAll(r)
-	if err != nil {
-		return nil, err
-	}
-
-	return res, nil
-}
-
-func isPointerType(x any) bool {
-	return (reflect.ValueOf(x).Type().Kind() == reflect.Pointer)
 }
