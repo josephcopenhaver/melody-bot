@@ -2,7 +2,9 @@ package handlers
 
 import (
 	"bufio"
+	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -40,10 +42,42 @@ type MediaMetaCacheEntry struct {
 	Size    int64          `json:"size"`
 }
 
+var vidMetadataCacheOptions = []cache.DiskCacheOption[string, MediaMetaCacheEntry]{
+	cache.DiskCacheKeyMarshaler[string, MediaMetaCacheEntry](cache.NewKeyMarshaler(
+		func(s string) ([]byte, error) {
+			return []byte(s), nil
+		},
+	)),
+	cache.DiskCacheValueTranscoder[string](cache.NewTranscoder(
+		func(v MediaMetaCacheEntry) ([]byte, error) {
+			var buf bytes.Buffer
+
+			enc := json.NewEncoder(&buf)
+			enc.SetEscapeHTML(false)
+
+			if err := enc.Encode(v); err != nil {
+				return nil, err
+			}
+
+			return buf.Bytes(), nil
+		},
+		func(b []byte) (MediaMetaCacheEntry, error) {
+			var result, buf MediaMetaCacheEntry
+
+			if err := json.Unmarshal(b, &buf); err != nil {
+				return result, err
+			}
+
+			result = buf
+			return result, nil
+		},
+	)),
+}
+
 var vidMetadataCache *cache.DiskCache[string, MediaMetaCacheEntry]
 
 func init() {
-	if v, err := cache.NewDiskCache[string, MediaMetaCacheEntry](MediaMetadataCacheDir, MediaMetadataCacheSize); err != nil {
+	if v, err := cache.NewDiskCache(MediaMetadataCacheDir, MediaMetadataCacheSize, vidMetadataCacheOptions...); err != nil {
 		panic(err)
 	} else {
 		vidMetadataCache = v
@@ -68,7 +102,7 @@ func Play() HandleMessageCreate {
 
 type audioStream struct {
 	pid              service.PlaylistID
-	pslc             time.Time
+	pslc             time.Time // player state last changed
 	srcVideoUrlStr   string
 	size             int64
 	ytApiClient      *youtube.Client
