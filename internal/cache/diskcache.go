@@ -20,171 +20,6 @@ import (
 // TODO: key and value removal could be extended to call some finalizer implementation and signal if it is
 // a ram-record delete, a disk-record delete, or both
 
-type Marshaler[V any] interface {
-	Marshal(V) ([]byte, error)
-}
-
-type Transcoder[V any] interface {
-	Marshaler[V]
-	Unmarshal([]byte) (V, error)
-}
-
-type defaultKeyMarshaler[K comparable] struct{}
-
-func (km *defaultKeyMarshaler[K]) Marshal(k K) ([]byte, error) {
-	ak := any(k)
-
-	var fileKey string
-	switch x := ak.(type) {
-	case []byte:
-		fileKey = string(x)
-	case []rune:
-		fileKey = string(x)
-	case string:
-		fileKey = string(x)
-	default:
-		if v, ok := ak.(encoding.TextMarshaler); ok {
-			val, err := v.MarshalText()
-			if err != nil {
-				return nil, fmt.Errorf("failed to MarshalText: %w", err)
-			}
-
-			fileKey = string(val)
-		} else if v, ok := ak.(encoding.BinaryMarshaler); ok {
-			val, err := v.MarshalBinary()
-			if err != nil {
-				return nil, fmt.Errorf("failed to MarshalBinary: %w", err)
-			}
-
-			fileKey = string(val)
-		} else if v, ok := ak.(json.Marshaler); ok {
-			val, err := v.MarshalJSON()
-			if err != nil {
-				return nil, fmt.Errorf("failed to MarshalJSON: %w", err)
-			}
-
-			fileKey = strings.TrimRight(string(val), "\n")
-		} else {
-			var buf bytes.Buffer
-			enc := json.NewEncoder(&buf)
-			enc.SetEscapeHTML(false)
-			if err := enc.Encode(k); err != nil {
-				return nil, fmt.Errorf("failed to json.Encode: %w", err)
-			}
-
-			fileKey = strings.TrimRight(buf.String(), "\n")
-		}
-	}
-
-	return []byte(fileKey), nil
-}
-
-func newDefaultKeyMarshaler[K comparable]() Marshaler[K] {
-	return &defaultKeyMarshaler[K]{}
-}
-
-type defaultValueTranscoder[V any] struct {
-	valIsPointerType bool
-}
-
-func (vt *defaultValueTranscoder[V]) Marshal(v V) ([]byte, error) {
-	av := any(v)
-
-	if vm, ok := av.(binaryTranscoder); ok {
-		return vm.MarshalBinary()
-	}
-
-	if vm, ok := av.(textTranscoder); ok {
-		b, err := vm.MarshalText()
-		if err != nil {
-			return nil, err
-		}
-
-		return b, nil
-	}
-
-	switch x := av.(type) {
-	case []byte:
-		return x, nil
-	case []rune:
-		return []byte(string(x)), nil
-	case string:
-		return []byte(x), nil
-	}
-
-	var buf bytes.Buffer
-	enc := json.NewEncoder(&buf)
-	enc.SetEscapeHTML(false)
-
-	if err := enc.Encode(v); err != nil {
-		return nil, err
-	}
-
-	return buf.Bytes(), nil
-}
-
-func (vt *defaultValueTranscoder[V]) Unmarshal(b []byte) (V, error) {
-	var result V
-	var buf V
-
-	var av any
-	if !vt.valIsPointerType {
-		av = any(&buf)
-	} else {
-		av = any(buf)
-	}
-
-	if v, ok := av.(binaryTranscoder); ok {
-		if err := v.UnmarshalBinary(b); err != nil {
-			return result, err
-		}
-
-		result = buf
-		return result, nil
-	}
-
-	if v, ok := av.(textTranscoder); ok {
-
-		if err := v.UnmarshalText(b); err != nil {
-			return result, err
-		}
-
-		result = buf
-		return result, nil
-	}
-
-	if !vt.valIsPointerType {
-		switch x := av.(type) {
-		case *[]byte:
-			reflect.ValueOf(x).Elem().Set(reflect.ValueOf(b))
-			result = buf
-			return result, nil
-		case *[]rune:
-			reflect.ValueOf(x).Elem().Set(reflect.ValueOf([]rune(string(b))))
-			result = buf
-			return result, nil
-		case *string:
-			reflect.ValueOf(x).Elem().Set(reflect.ValueOf(string(b)))
-			result = buf
-			return result, nil
-		}
-	}
-
-	if err := json.Unmarshal(b, &buf); err != nil {
-		return result, err
-	}
-
-	result = buf
-	return result, nil
-}
-
-func newDefaultValueTranscoder[V any]() Transcoder[V] {
-	var v V
-	return &defaultValueTranscoder[V]{
-		valIsPointerType: (reflect.ValueOf(v).Type().Kind() == reflect.Pointer),
-	}
-}
-
 type binaryTranscoder interface {
 	encoding.BinaryMarshaler
 	encoding.BinaryUnmarshaler
@@ -193,6 +28,287 @@ type binaryTranscoder interface {
 type textTranscoder interface {
 	encoding.TextMarshaler
 	encoding.TextUnmarshaler
+}
+
+type jsonTranscoder interface {
+	json.Marshaler
+	json.Unmarshaler
+}
+
+type Marshaler[V any] interface {
+	Marshal(V) ([]byte, error)
+}
+
+type marshaler[V any] struct {
+	marshal func(V) ([]byte, error)
+}
+
+func (km *marshaler[V]) Marshal(v V) ([]byte, error) {
+	return km.marshal(v)
+}
+
+// NewKeyMarshaler returns an instance of a Marshaler of a comparable type
+func NewKeyMarshaler[K comparable](marshal func(K) ([]byte, error)) Marshaler[K] {
+	return &marshaler[K]{marshal}
+}
+
+func newDefaultKeyMarshaler[K comparable]() Marshaler[K] {
+	var ak any
+	{
+		var k K
+		ak = any(k)
+	}
+
+	switch ak.(type) {
+	case encoding.BinaryMarshaler:
+		return NewKeyMarshaler(func(k K) ([]byte, error) {
+			val, err := any(k).(encoding.BinaryMarshaler).MarshalBinary()
+			if err != nil {
+				return nil, fmt.Errorf("failed to MarshalBinary: %w", err)
+			}
+
+			return val, nil
+		})
+	case encoding.TextMarshaler:
+		return NewKeyMarshaler(func(k K) ([]byte, error) {
+			val, err := any(k).(encoding.TextMarshaler).MarshalText()
+			if err != nil {
+				return nil, fmt.Errorf("failed to MarshalText: %w", err)
+			}
+
+			return val, nil
+		})
+	case json.Marshaler:
+		return NewKeyMarshaler(func(k K) ([]byte, error) {
+			val, err := any(k).(json.Marshaler).MarshalJSON()
+			if err != nil {
+				return nil, fmt.Errorf("failed to MarshalJSON: %w", err)
+			}
+
+			return []byte(strings.TrimRight(string(val), "\n")), nil
+		})
+	case string:
+		return NewKeyMarshaler(func(k K) ([]byte, error) {
+			return []byte(any(k).(string)), nil
+		})
+	}
+
+	return NewKeyMarshaler(func(k K) ([]byte, error) {
+		var buf bytes.Buffer
+
+		enc := json.NewEncoder(&buf)
+		enc.SetEscapeHTML(false)
+
+		if err := enc.Encode(k); err != nil {
+			return nil, fmt.Errorf("failed to json.Encode: %w", err)
+		}
+
+		return []byte(strings.TrimRight(buf.String(), "\n")), nil
+	})
+}
+
+type Transcoder[V any] interface {
+	Marshaler[V]
+	Unmarshal([]byte) (V, error)
+}
+
+type transcoder[V any] struct {
+	marshal   func(V) ([]byte, error)
+	unmarshal func([]byte) (V, error)
+}
+
+func (vt *transcoder[V]) Marshal(v V) ([]byte, error) {
+	return vt.marshal(v)
+}
+
+func (vt *transcoder[V]) Unmarshal(b []byte) (V, error) {
+	return vt.unmarshal(b)
+}
+
+// NewKeyMarshaler returns an instance of a Transcoder of any type
+func NewTranscoder[V any](marshal func(V) ([]byte, error), unmarshal func([]byte) (V, error)) Transcoder[V] {
+	return &transcoder[V]{marshal, unmarshal}
+}
+
+func newDefaultTranscoder[V any]() Transcoder[V] {
+	var valIsPointerType bool
+	var av any
+	{
+		var v V
+
+		valIsPointerType = (reflect.ValueOf(v).Type().Kind() == reflect.Pointer)
+		av = any(v)
+	}
+
+	if valIsPointerType {
+		switch av.(type) {
+		case binaryTranscoder:
+			return NewTranscoder(
+				func(v V) ([]byte, error) {
+					return any(v).(binaryTranscoder).MarshalBinary()
+				},
+				func(b []byte) (V, error) {
+					var result, buf V
+
+					if err := any(buf).(binaryTranscoder).UnmarshalBinary(b); err != nil {
+						return result, err
+					}
+
+					result = buf
+					return result, nil
+				},
+			)
+		case textTranscoder:
+			return NewTranscoder(
+				func(v V) ([]byte, error) {
+					return any(v).(textTranscoder).MarshalText()
+				},
+				func(b []byte) (V, error) {
+					var result, buf V
+
+					if err := any(buf).(textTranscoder).UnmarshalText(b); err != nil {
+						return result, err
+					}
+
+					result = buf
+					return result, nil
+				},
+			)
+		case jsonTranscoder:
+			return NewTranscoder(
+				func(v V) ([]byte, error) {
+					return any(v).(jsonTranscoder).MarshalJSON()
+				},
+				func(b []byte) (V, error) {
+					var result, buf V
+
+					if err := any(buf).(jsonTranscoder).UnmarshalJSON(b); err != nil {
+						return result, err
+					}
+
+					result = buf
+					return result, nil
+				},
+			)
+		}
+
+		return NewTranscoder(
+			func(v V) ([]byte, error) {
+				var buf bytes.Buffer
+
+				enc := json.NewEncoder(&buf)
+				enc.SetEscapeHTML(false)
+
+				if err := enc.Encode(v); err != nil {
+					return nil, err
+				}
+
+				return buf.Bytes(), nil
+			},
+			func(b []byte) (V, error) {
+				var result, buf V
+
+				if err := json.Unmarshal(b, buf); err != nil {
+					return result, err
+				}
+
+				result = buf
+				return result, nil
+			},
+		)
+	}
+
+	switch av.(type) {
+	case []byte:
+		return NewTranscoder(
+			func(v V) ([]byte, error) {
+				b := any(v).([]byte)
+				if b == nil {
+					return nil, nil
+				}
+
+				buf := make([]byte, len(b))
+				copy(buf, b)
+
+				return buf, nil
+			},
+			func(b []byte) (V, error) {
+				var result V
+				if b == nil {
+					return result, nil
+				}
+
+				buf := make([]byte, len(b))
+				copy(buf, b)
+
+				reflect.ValueOf(&result).Elem().Set(reflect.ValueOf(buf))
+
+				return result, nil
+			},
+		)
+	case []rune:
+		return NewTranscoder(
+			func(v V) ([]byte, error) {
+				runes := any(v).([]rune)
+				if runes == nil {
+					return nil, nil
+				}
+
+				return []byte(string(runes)), nil
+			},
+			func(b []byte) (V, error) {
+				var result V
+				if b == nil {
+					return result, nil
+				}
+
+				reflect.ValueOf(&result).Elem().Set(reflect.ValueOf([]rune(string(b))))
+
+				return result, nil
+			},
+		)
+	case string:
+		return NewTranscoder(
+			func(v V) ([]byte, error) {
+				return []byte(any(v).(string)), nil
+			},
+			func(b []byte) (V, error) {
+				var result V
+				if b == nil {
+					return result, nil
+				}
+
+				reflect.ValueOf(&result).Elem().Set(reflect.ValueOf(string(b)))
+
+				return result, nil
+			},
+		)
+	}
+
+	return NewTranscoder(
+		func(v V) ([]byte, error) {
+			var buf bytes.Buffer
+
+			enc := json.NewEncoder(&buf)
+			enc.SetEscapeHTML(false)
+
+			if err := enc.Encode(v); err != nil {
+				return nil, err
+			}
+
+			return buf.Bytes(), nil
+		},
+		func(b []byte) (V, error) {
+			var result, buf V
+
+			if err := json.Unmarshal(b, &buf); err != nil {
+				return result, err
+			}
+
+			result = buf
+			return result, nil
+		},
+	)
 }
 
 type diskCacheMemRecord[V any] struct {
@@ -262,7 +378,7 @@ func NewDiskCache[K comparable, V any](path string, maxSize int, options ...Disk
 	}
 
 	if !cfg.valTranscoderSet {
-		cfg.valTranscoder = newDefaultValueTranscoder[V]()
+		cfg.valTranscoder = newDefaultTranscoder[V]()
 	}
 
 	return &DiskCache[K, V]{
