@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"net/url"
 	"os"
 	"regexp"
@@ -19,7 +18,7 @@ func Cache() HandleMessageCreate {
 	return newHandleMessageCreate(
 		"cache-url",
 		"cache <url>",
-		"process music from a video url for playing at a later time",
+		"process music from a video url for playing at a future time",
 		newRegexMatcher(
 			true,
 			regexp.MustCompile(`^\s*cache\s+(?P<url>[^\s]+.*?)\s*$`),
@@ -46,6 +45,7 @@ func downloadAudioStreamAsync(ctx context.Context, p *service.Player, urlStr str
 		ytDownloadClient: newYoutubeDownloadClient(),
 	}
 
+	// establish the dstFilePath via the download url
 	if err := as.SelectDownloadURL(ctx); err != nil {
 		return err
 	}
@@ -89,17 +89,10 @@ func downloadAudioStreamAsync(ctx context.Context, p *service.Player, urlStr str
 
 	// download and transcode the file
 
-	rc, err := as.ReadCloser(ctx, &wg)
-	if err != nil {
-		(*extCancel)(err)
-		return err
-	}
-
 	wg.Add(1)
 	p.RegisterCanceler(extCancel)
 	go func() {
 		defer wg.Done()
-		defer rc.Close()
 
 		var err error
 		defer func() {
@@ -112,30 +105,18 @@ func downloadAudioStreamAsync(ctx context.Context, p *service.Player, urlStr str
 					} else {
 						err = ErrPanicInCacher
 					}
+				} else {
+					return
 				}
-			} else {
-				p.BroadcastTextMessage(err.Error())
 			}
+
+			p.BroadcastTextMessage(err.Error())
 
 			cancel(err)
 		}()
 
-		var buf []byte
-		{
-			b := [4096]byte{}
-			buf = b[:]
-		}
-
-		for {
-			_, readErr := rc.Read(buf)
-			if readErr != nil {
-				if !errors.Is(readErr, io.EOF) {
-					err = errors.New(fmt.Sprintf("cache: download and transcode process for %s failed: %w", urlStr, readErr))
-					return
-				}
-
-				return
-			}
+		if e := as.DownloadAndTranscode(ctx); e != nil {
+			err = fmt.Errorf("cache: download and transcode process for %s failed: %w", urlStr, e)
 		}
 	}()
 

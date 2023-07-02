@@ -322,6 +322,10 @@ func (as *audioStream) Cached() bool {
 	return true
 }
 
+func shellEscape(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
+}
+
 func (as *audioStream) ReadCloser(ctx context.Context, wg *sync.WaitGroup) (io.ReadCloser, error) {
 
 	if as.Cached() {
@@ -471,11 +475,7 @@ func (as *audioStream) ReadCloser(ctx context.Context, wg *sync.WaitGroup) (io.R
 			return
 		}
 
-		escape := func(s string) string {
-			return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
-		}
-
-		cmd := exec.CommandContext(ctx, "bash", "-c", "set -eo pipefail && ffmpeg -f mp4 -y -loglevel quiet -i pipe: -ar "+strconv.Itoa(service.SampleRate)+" -ac 1 -vn -f s16le pipe:1 | tee "+escape(tmpFilePath))
+		cmd := exec.CommandContext(ctx, "bash", "-c", "set -eo pipefail && ffmpeg -f mp4 -y -loglevel quiet -i pipe: -ar "+strconv.Itoa(service.SampleRate)+" -ac 1 -vn -f s16le pipe:1 | tee "+shellEscape(tmpFilePath))
 		cmd.Stdin = cr
 		bw := bufio.NewWriter(pw)
 		cmd.Stdout = bw
@@ -549,6 +549,122 @@ func (as *audioStream) ReadCloser(ctx context.Context, wg *sync.WaitGroup) (io.R
 	}
 
 	return &result, nil
+}
+
+// DownloadAndTranscode synchronously downloads and transcodes the audio stream to disk
+//
+// The audio stream should be considered closed after a call is made to this function
+// and it cannot be mixed with the async ReadCloser func.
+func (as *audioStream) DownloadAndTranscode(ctx context.Context) error {
+
+	log.Debug().
+		Str("url", as.srcVideoUrlStr).
+		Msg("downloading and transcoding to cache")
+
+	cacheDir := path.Dir(as.dstFilePath)
+
+	if err := os.MkdirAll(cacheDir, os.ModePerm); err != nil {
+		return fmt.Errorf("failed to make cache directory: %s: %v", cacheDir, err)
+	}
+
+	tmpF, err := ioutil.TempFile(cacheDir, "melody-bot.*.audio.s16le.tmp")
+	if err != nil {
+		return err
+	}
+
+	tmpFilePath := tmpF.Name()
+
+	ignoredErr := tmpF.Close()
+	_ = ignoredErr
+
+	cleanup := func() {
+		os.Remove(tmpFilePath)
+	}
+	defer func() {
+		if f := cleanup; f != nil {
+			cleanup = nil
+			f()
+		}
+	}()
+
+	log.Debug().
+		Int64("content-length", as.Format.ContentLength).
+		Str("video-url", as.srcVideoUrlStr).
+		Msg("getting stream")
+
+	f, s, err := as.getStream(ctx, as.Video, as.Format)
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if f != nil {
+			f.Close()
+		}
+	}()
+	if s == 0 {
+		if v := f; v != nil {
+			f = nil
+			v.Close()
+		}
+
+		as.Video = nil
+		as.size = 0
+		as.Format = nil
+
+		if err := vidMetadataCache.Delete(as.srcVideoUrlStr); err != nil {
+			return err
+		}
+
+		if err := as.SelectDownloadURL(ctx); err != nil {
+			return err
+		}
+		f, s, err = as.getStream(ctx, as.Video, as.Format)
+		if err != nil {
+			return err
+		}
+		if s == 0 {
+			return errors.New("failed to get stream context")
+		}
+	}
+
+	cr := newCountingReader(f)
+
+	if s != as.size {
+		return fmt.Errorf("unexpected stream size detected on open, expected %d, got %d", as.size, s)
+	}
+
+	cmd := exec.CommandContext(ctx, "bash", "-c", "set -eo pipefail && ffmpeg -f mp4 -y -loglevel quiet -i pipe: -ar "+strconv.Itoa(service.SampleRate)+" -ac 1 -vn -f s16le "+shellEscape(tmpFilePath))
+	cmd.Stdin = cr
+
+	if err := cmd.Run(); err != nil {
+		return fmt.Errorf("stream conversion process failed: %s", err.Error())
+	}
+
+	if cr.bytesRead != as.size {
+		err := errors.New("unexpected end of stream during download")
+
+		log.Err(err).
+			Str("src_url", as.srcVideoUrlStr).
+			Str("dst_path", as.dstFilePath).
+			Int64("bytes_read", cr.bytesRead).
+			Int64("size", as.size).
+			Msg("error")
+
+		return err
+	}
+
+	if err := os.Rename(tmpFilePath, as.dstFilePath); err != nil {
+		log.Err(err).
+			Str("src", tmpFilePath).
+			Str("dst", as.dstFilePath).
+			Msg("failed to rename file")
+
+		return err
+	}
+
+	cleanup = nil
+
+	return nil
 }
 
 var apiHttpClient = http.Client{
