@@ -361,7 +361,7 @@ func (as *audioStream) ReadCloser(ctx context.Context, wg *sync.WaitGroup) (io.R
 			Str("src_url", as.srcVideoUrlStr).
 			Str("dst_path", as.dstFilePath).
 			Int64("size", as.size).
-			Msg("error")
+			Msg("error in audio stream read-closer")
 
 		errResp.err = err
 	}
@@ -487,14 +487,14 @@ func (as *audioStream) ReadCloser(ctx context.Context, wg *sync.WaitGroup) (io.R
 		}
 
 		if cr.bytesRead != as.size {
-			err := errors.New("unexpected end of stream during download")
+			err := errors.New("unexpected end of stream during transcode+reader")
 
 			log.Err(err).
 				Str("src_url", as.srcVideoUrlStr).
 				Str("dst_path", as.dstFilePath).
 				Int64("bytes_read", cr.bytesRead).
 				Int64("size", as.size).
-				Msg("error")
+				Msg("failed to download all bytes from source stream for transcode+reader")
 
 			setErr(err)
 			return
@@ -641,14 +641,14 @@ func (as *audioStream) DownloadAndTranscode(ctx context.Context) error {
 	}
 
 	if cr.bytesRead != as.size {
-		err := errors.New("unexpected end of stream during download")
+		err := errors.New("unexpected end of stream during DownloadAndTranscode")
 
 		log.Err(err).
 			Str("src_url", as.srcVideoUrlStr).
 			Str("dst_path", as.dstFilePath).
 			Int64("bytes_read", cr.bytesRead).
 			Int64("size", as.size).
-			Msg("error")
+			Msg("failed to download all bytes from source stream for transcode+cache")
 
 		return err
 	}
