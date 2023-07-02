@@ -482,7 +482,7 @@ func (as *audioStream) ReadCloser(ctx context.Context, wg *sync.WaitGroup) (io.R
 		defer bw.Flush()
 
 		if err := cmd.Run(); err != nil {
-			setErr(fmt.Errorf("stream conversion process failed: %s", err.Error()))
+			setErr(fmt.Errorf("stream conversion process failed: %w", err))
 			return
 		}
 
@@ -637,7 +637,7 @@ func (as *audioStream) DownloadAndTranscode(ctx context.Context) error {
 	cmd.Stdin = cr
 
 	if err := cmd.Run(); err != nil {
-		return fmt.Errorf("stream conversion process failed: %s", err.Error())
+		return fmt.Errorf("stream conversion process failed: %w", err)
 	}
 
 	if cr.bytesRead != as.size {
