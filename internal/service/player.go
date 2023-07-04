@@ -489,7 +489,7 @@ func (p *Player) reset() {
 
 			var wg sync.WaitGroup
 			wg.Add(len(oldMap))
-			for k, _ := range oldMap {
+			for k := range oldMap {
 				k := k
 
 				go func() {

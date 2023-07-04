@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"errors"
 	"sync"
 
 	"github.com/bwmarrin/discordgo"
@@ -41,27 +42,22 @@ func (s *Server) ListenAndServe(ctx context.Context) (err_result error) {
 
 	sd := handlers.SerialDownloader()
 	sd.Start(ctx)
-
-	// open a connection to discord
-	if err := s.DiscordSession.Open(); err != nil {
-		return err
-	}
-
-	log.Info().
-		Msg("listening")
-
-	defer func() {
-		log.Warn().
-			Msg("waiting for discord session to close")
-
-		err_result = s.DiscordSession.Close()
-	}()
-
 	defer func() {
 		log.Warn().
 			Msg("waiting for cache downloader to terminate")
 
 		sd.Wait()
+	}()
+
+	// open a connection to discord
+	if err := s.DiscordSession.Open(); err != nil {
+		return err
+	}
+	defer func() {
+		log.Warn().
+			Msg("waiting for discord session to close")
+
+		err_result = errors.Join(err_result, s.DiscordSession.Close())
 	}()
 
 	defer func() {
@@ -70,6 +66,9 @@ func (s *Server) ListenAndServe(ctx context.Context) (err_result error) {
 
 		s.wg.Wait()
 	}()
+
+	log.Info().
+		Msg("listening")
 
 	<-ctx.Done()
 
