@@ -376,7 +376,7 @@ func (as *audioStream) ReadCloser(ctx context.Context, wg *sync.WaitGroup) (io.R
 	cacheDir := path.Dir(as.dstFilePath)
 
 	if err := os.MkdirAll(cacheDir, os.ModePerm); err != nil {
-		return nil, fmt.Errorf("failed to make cache directory: %s: %v", cacheDir, err)
+		return nil, fmt.Errorf("failed to make cache directory: %s: %w", cacheDir, err)
 	}
 
 	tmpF, err := ioutil.TempFile(cacheDir, "melody-bot.*.audio.s16le.tmp")
@@ -564,7 +564,7 @@ func (as *audioStream) DownloadAndTranscode(ctx context.Context) error {
 	cacheDir := path.Dir(as.dstFilePath)
 
 	if err := os.MkdirAll(cacheDir, os.ModePerm); err != nil {
-		return fmt.Errorf("failed to make cache directory: %s: %v", cacheDir, err)
+		return fmt.Errorf("failed to make cache directory: %s: %w", cacheDir, err)
 	}
 
 	tmpF, err := ioutil.TempFile(cacheDir, "melody-bot.*.audio.s16le.tmp")
@@ -856,7 +856,7 @@ func processPlaylist(ctx context.Context, s *discordgo.Session, m *discordgo.Mes
 			{
 				c, err := findVoiceChannel(s, m, p)
 				if err != nil {
-					return fmt.Errorf("failed to auto-join a voice channel: %v", err)
+					return fmt.Errorf("failed to auto-join a voice channel: %w", err)
 				}
 
 				if c == nil {
@@ -928,7 +928,7 @@ func playAfterTranscode(ctx context.Context, s *discordgo.Session, m *discordgo.
 	{
 		c, err := findVoiceChannel(s, m, p)
 		if err != nil {
-			return fmt.Errorf("failed to auto-join a voice channel: %v", err)
+			return fmt.Errorf("failed to auto-join a voice channel: %w", err)
 		}
 
 		if c == nil {
