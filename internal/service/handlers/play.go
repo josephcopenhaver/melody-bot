@@ -175,6 +175,11 @@ func (as *audioStream) SrcUrlStr() string {
 }
 
 func (as *audioStream) SelectDownloadURL(ctx context.Context) error {
+	return as.SelectDownloadURLWithFallbackApiClient(ctx, nil)
+}
+
+// SelectDownloadURLWithFallbackApiClient is a jenky test that can modify the state of the audioStream apiClient if newApiClient is non-nil
+func (as *audioStream) SelectDownloadURLWithFallbackApiClient(ctx context.Context, newApiClient func() *youtube.Client) error {
 
 	// protect against getting called more than once
 	if as.Video != nil {
@@ -229,6 +234,11 @@ func (as *audioStream) SelectDownloadURL(ctx context.Context) error {
 				newReader.Close()
 			}
 			if newSize == 0 {
+				if f := newApiClient; f != nil {
+					if v := f(); v != nil {
+						as.ytApiClient = v
+					}
+				}
 				// try again, there is a bug in the client implementation
 				newReader, newSize, err = as.ytApiClient.GetStreamContext(ctx, ytVid, &n)
 				if err != nil {

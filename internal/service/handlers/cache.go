@@ -185,7 +185,7 @@ func downloadPlaylistAudioStreamsAsync(ctx context.Context, p *service.Player, u
 			ytDownloadClient: newYoutubeDownloadClient(),
 		}
 
-		if err := as.SelectDownloadURL(ctx); err != nil {
+		if err := as.SelectDownloadURLWithFallbackApiClient(ctx, newYoutubeApiClient); err != nil {
 			log.Ctx(ctx).Err(err).
 				Str("track", as.srcVideoUrlStr).
 				Msg("failed to select download url")
