@@ -175,6 +175,11 @@ func (as *audioStream) SrcUrlStr() string {
 }
 
 func (as *audioStream) SelectDownloadURL(ctx context.Context) error {
+	return as.SelectDownloadURLWithFallbackApiClient(ctx, nil)
+}
+
+// SelectDownloadURLWithFallbackApiClient is a jenky test that can modify the state of the audioStream apiClient if newApiClient is non-nil
+func (as *audioStream) SelectDownloadURLWithFallbackApiClient(ctx context.Context, newApiClient func() *youtube.Client) error {
 
 	// protect against getting called more than once
 	if as.Video != nil {
@@ -229,6 +234,11 @@ func (as *audioStream) SelectDownloadURL(ctx context.Context) error {
 				newReader.Close()
 			}
 			if newSize == 0 {
+				if f := newApiClient; f != nil {
+					if v := f(); v != nil {
+						as.ytApiClient = v
+					}
+				}
 				// try again, there is a bug in the client implementation
 				newReader, newSize, err = as.ytApiClient.GetStreamContext(ctx, ytVid, &n)
 				if err != nil {
@@ -376,7 +386,7 @@ func (as *audioStream) ReadCloser(ctx context.Context, wg *sync.WaitGroup) (io.R
 	cacheDir := path.Dir(as.dstFilePath)
 
 	if err := os.MkdirAll(cacheDir, os.ModePerm); err != nil {
-		return nil, fmt.Errorf("failed to make cache directory: %s: %v", cacheDir, err)
+		return nil, fmt.Errorf("failed to make cache directory: %s: %w", cacheDir, err)
 	}
 
 	tmpF, err := ioutil.TempFile(cacheDir, "melody-bot.*.audio.s16le.tmp")
@@ -564,7 +574,7 @@ func (as *audioStream) DownloadAndTranscode(ctx context.Context) error {
 	cacheDir := path.Dir(as.dstFilePath)
 
 	if err := os.MkdirAll(cacheDir, os.ModePerm); err != nil {
-		return fmt.Errorf("failed to make cache directory: %s: %v", cacheDir, err)
+		return fmt.Errorf("failed to make cache directory: %s: %w", cacheDir, err)
 	}
 
 	tmpF, err := ioutil.TempFile(cacheDir, "melody-bot.*.audio.s16le.tmp")
@@ -856,7 +866,7 @@ func processPlaylist(ctx context.Context, s *discordgo.Session, m *discordgo.Mes
 			{
 				c, err := findVoiceChannel(s, m, p)
 				if err != nil {
-					return fmt.Errorf("failed to auto-join a voice channel: %v", err)
+					return fmt.Errorf("failed to auto-join a voice channel: %w", err)
 				}
 
 				if c == nil {
@@ -928,7 +938,7 @@ func playAfterTranscode(ctx context.Context, s *discordgo.Session, m *discordgo.
 	{
 		c, err := findVoiceChannel(s, m, p)
 		if err != nil {
-			return fmt.Errorf("failed to auto-join a voice channel: %v", err)
+			return fmt.Errorf("failed to auto-join a voice channel: %w", err)
 		}
 
 		if c == nil {

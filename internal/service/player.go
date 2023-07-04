@@ -489,7 +489,7 @@ func (p *Player) reset() {
 
 			var wg sync.WaitGroup
 			wg.Add(len(oldMap))
-			for k, _ := range oldMap {
+			for k := range oldMap {
 				k := k
 
 				go func() {
@@ -1050,7 +1050,7 @@ func (p *Player) playerStateMachine() error {
 
 	f, err := track.ReadCloser(ctx, p.wg)
 	if err != nil {
-		return fmt.Errorf("failed to open audio stream: %s, %t: %v", track.SrcUrlStr(), track.Cached(), err)
+		return fmt.Errorf("failed to open audio stream: %s, %t: %w", track.SrcUrlStr(), track.Cached(), err)
 	}
 	defer f.Close()
 
@@ -1206,7 +1206,7 @@ func (p *Player) playerStateMachine() error {
 
 				return nil
 			}
-			return fmt.Errorf("error reading track: %s: %v", track.SrcUrlStr(), err)
+			return fmt.Errorf("error reading track: %s: %w", track.SrcUrlStr(), err)
 		}
 
 		numBytes, err := opusEncoder.Encode(pcmBuf[:], SampleSize, packet)
@@ -1232,7 +1232,7 @@ func (p *Player) playerStateMachine() error {
 		}
 
 		if err != nil {
-			return fmt.Errorf("error encoding track to opus: %s: %v", track.SrcUrlStr(), err)
+			return fmt.Errorf("error encoding track to opus: %s: %w", track.SrcUrlStr(), err)
 		}
 	}
 }
