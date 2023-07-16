@@ -102,8 +102,9 @@ type Track struct {
 }
 
 type playRequest struct {
-	track *Track
-	pslc  time.Time
+	track      *Track
+	playlistID string
+	pslc       time.Time
 }
 
 type Playlist struct {
@@ -427,6 +428,10 @@ func (p *Player) withCancelLock(f func(m map[*func(error)]struct{})) {
 	f(p.cancelFuncs)
 }
 
+// withMemoryErr should only be used to modify state of the player safely
+//
+// do not mix it with other responsibilities like send to or receiving from channels
+// you'll likely encounter deadlocks
 func (p *Player) withMemoryErr(f func(m *PlayerMemory) error) error {
 
 	// p.debug().Msg("withMemory: waiting for lock")
@@ -455,6 +460,10 @@ func (p *Player) withMemoryErr(f func(m *PlayerMemory) error) error {
 	return nil
 }
 
+// withMemory should only be used to modify state of the player safely
+//
+// do not mix it with other responsibilities like send to or receiving from channels
+// you'll likely encounter deadlocks
 func (p *Player) withMemory(f func(m *PlayerMemory)) {
 
 	// will never actually have an error
@@ -819,18 +828,23 @@ func (p *Player) playPackGoroutine(wg *sync.WaitGroup) {
 						AuthorId:      v.AuthorID,
 						AuthorMention: v.AuthorMention,
 					},
-					pslc: as.PlayerStateLastChangedAt(),
+					playlistID: as.PlaylistID(),
+					pslc:       as.PlayerStateLastChangedAt(),
 				}
 
+				var ctxExpired bool
 				p.withMemory(func(m *PlayerMemory) {
 					if as.PlaylistID() != m.id.String() {
+						p.debug().Msg("context is expired")
 						// context is expired and is no longer valid
-						return
+						ctxExpired = true
 					}
 
-					p.signalChan <- TracedSignal{v.MessageCreate, SignalPlay, payload}
-
 				})
+
+				if !ctxExpired {
+					p.signalChan <- TracedSignal{v.MessageCreate, SignalPlay, payload}
+				}
 			}
 		}
 	}
@@ -907,7 +921,7 @@ func (p *Player) playerStateMachine() error {
 	var err error
 	var sendChan chan<- []byte
 
-	p.debug().Msg("player: main loop start: signal check")
+	p.debug().Str("state", p.stateMachine.state.String()).Msg("player: main loop start: signal check")
 
 	switch p.stateMachine.state {
 	case StateDefault:
@@ -916,9 +930,9 @@ func (p *Player) playerStateMachine() error {
 		// signals recognized when in initial state
 		s := <-p.signalChan
 
-		p.setDefaultTextChannel(s.sig, s.src)
+		p.debug().Str("signal", s.sig.String()).Msg("player: got signal before playing track")
 
-		p.debug().Msg("player: got signal before playing track")
+		p.setDefaultTextChannel(s.sig, s.src)
 
 		switch s.sig {
 		case SignalDispose:
@@ -931,12 +945,24 @@ func (p *Player) playerStateMachine() error {
 			pr := s.signalPayload.(*playRequest)
 			isSyncCall := p.stateUnchangedSince(pr.pslc)
 
+			var ctxExpired bool
 			p.withMemory(func(m *PlayerMemory) {
+				if pr.playlistID != m.id.String() {
+					p.debug().Msg("context is expired")
+					ctxExpired = true
+					return
+				}
+
 				m.play(p.stateMachine.state, pr, p.debug)
 				if isSyncCall {
 					hasAudience = m.hasAudience(p.discordSession, p.discordGuildId)
 				}
 			})
+
+			if ctxExpired {
+				// ignore signal, don't change any state
+				return nil
+			}
 
 			if isSyncCall {
 
@@ -958,9 +984,11 @@ func (p *Player) playerStateMachine() error {
 		// signals recognized when in idle state ( stopped or partially errored )
 		s := <-p.signalChan
 
+		p.debug().Str("signal", s.sig.String()).Msg("player: got signal before playing track")
+
 		p.setDefaultTextChannel(s.sig, s.src)
 
-		p.debug().Msg("player: got signal before playing track")
+		p.debug().Msg("player: default text channel set")
 
 		switch s.sig {
 		case SignalDispose:
@@ -977,12 +1005,24 @@ func (p *Player) playerStateMachine() error {
 			pr := s.signalPayload.(*playRequest)
 			isSyncCall := p.stateUnchangedSince(pr.pslc)
 
+			var ctxExpired bool
 			p.withMemory(func(m *PlayerMemory) {
+				if pr.playlistID != m.id.String() {
+					p.debug().Msg("context is expired")
+					ctxExpired = true
+					return
+				}
+
 				m.play(p.stateMachine.state, pr, p.debug)
 				if isSyncCall {
 					hasAudience = m.hasAudience(p.discordSession, p.discordGuildId)
 				}
 			})
+
+			if ctxExpired {
+				// ignore signal, don't change any state
+				return nil
+			}
 
 			if isSyncCall {
 				if !hasAudience {
@@ -1006,7 +1046,7 @@ func (p *Player) playerStateMachine() error {
 
 	if p.stateMachine.state != StatePlaying {
 
-		p.debug().Msg("player: not playing")
+		p.debug().Str("state", p.stateMachine.state.String()).Msg("player: not playing")
 
 		p.setState(StateIdle)
 
@@ -1078,6 +1118,7 @@ func (p *Player) playerStateMachine() error {
 		// type: non-blocking
 		// signals recognized when in playing state
 		case s := <-p.signalChan:
+			p.debug().Str("signal", s.sig.String()).Msg("player: got signal while playing")
 			p.setDefaultTextChannel(s.sig, s.src)
 
 			switch s.sig {
@@ -1089,9 +1130,23 @@ func (p *Player) playerStateMachine() error {
 					return nil
 				}
 			case SignalPlay:
+				pr := s.signalPayload.(*playRequest)
+
+				var ctxExpired bool
 				p.withMemory(func(m *PlayerMemory) {
-					m.play(p.stateMachine.state, s.signalPayload.(*playRequest), p.debug)
+					if pr.playlistID != m.id.String() {
+						p.debug().Msg("context is expired")
+						ctxExpired = true
+						return
+					}
+
+					m.play(p.stateMachine.state, pr, p.debug)
 				})
+
+				if ctxExpired {
+					// ignore signal, don't change any state, continue playback
+					continue
+				}
 			case SignalPrevious:
 				p.previousTrack(1) // current track is playing
 				return nil
@@ -1130,9 +1185,21 @@ func (p *Player) playerStateMachine() error {
 						pr := s.signalPayload.(*playRequest)
 						isSyncCall := p.stateUnchangedSince(pr.pslc)
 
+						var ctxExpired bool
 						p.withMemory(func(m *PlayerMemory) {
+							if pr.playlistID != m.id.String() {
+								p.debug().Msg("context is expired")
+								ctxExpired = true
+								return
+							}
+
 							m.play(p.stateMachine.state, pr, p.debug)
 						})
+
+						if ctxExpired {
+							// ignore signal, don't change any state, stay paused
+							continue
+						}
 
 						if isSyncCall {
 							broadcastMsg := "player is paused; to resume playback send the following message:\n\n" +

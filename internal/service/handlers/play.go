@@ -187,12 +187,13 @@ func (as *audioStream) SelectDownloadURLWithFallbackApiClient(ctx context.Contex
 	}
 
 	var ytVid *youtube.Video
-	cacheV, ok, err := vidMetadataCache.Get(as.srcVideoUrlStr)
+	cacheV, cacheHit, err := vidMetadataCache.Get(as.srcVideoUrlStr)
 	if err != nil {
 		return err
 	}
 
-	if ok {
+	if cacheHit {
+
 		ytVid = &youtube.Video{ID: cacheV.VideoID}
 		as.size = cacheV.Size
 		fmt := cacheV.Format
@@ -277,16 +278,20 @@ func (as *audioStream) SelectDownloadURLWithFallbackApiClient(ctx context.Contex
 	as.dstFilePath = cachedRef
 	as.Video = ytVid
 
-	if err := vidMetadataCache.Set(as.srcVideoUrlStr, MediaMetaCacheEntry{
-		VideoID: ytVid.ID,
-		Format:  *as.Format,
-		Size:    as.size,
-	}); err != nil {
-		log.Error().
-			Err(err).
-			Str("key", as.srcVideoUrlStr).
-			Interface("VideoFormat", *as.Format).
-			Msg("failed to save a video metadata cache entry")
+	if !cacheHit {
+		cacheV = MediaMetaCacheEntry{
+			VideoID: ytVid.ID,
+			Format:  *as.Format,
+			Size:    as.size,
+		}
+
+		if err := vidMetadataCache.Set(as.srcVideoUrlStr, cacheV); err != nil {
+			log.Error().
+				Err(err).
+				Str("key", as.srcVideoUrlStr).
+				Interface("VideoFormat", *as.Format).
+				Msg("failed to save a video metadata cache entry")
+		}
 	}
 
 	log.Debug().
@@ -325,7 +330,10 @@ func (as *audioStream) Cached() bool {
 	}
 
 	if info.Size() == 0 {
-		os.Remove(as.dstFilePath)
+		if err := os.Remove(as.dstFilePath); err != nil {
+			log.Err(err).
+				Msg("failed to remove empty file")
+		}
 		return false
 	}
 
