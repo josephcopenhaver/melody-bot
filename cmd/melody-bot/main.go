@@ -17,7 +17,7 @@ import (
 // system process receives an interrupt, sigint, or sigterm
 //
 // Also returns a function that can be used to cancel the context.
-func rootContext() (context.Context, func()) {
+func rootContext() (context.Context, func()) { //nolint:gocritic
 
 	ctx, cancel := context.WithCancel(context.Background())
 
@@ -30,7 +30,7 @@ func rootContext() (context.Context, func()) {
 
 		done := ctx.Done()
 
-		requester := "unknown"
+		var requester string
 		select {
 		case <-procDone:
 			requester = "user"
@@ -88,7 +88,7 @@ func main() {
 			Msg("failed to load configuration")
 	}
 
-	if err := server.Handlers(); err != nil {
+	if err := server.Handlers(ctx); err != nil {
 		log.Panic().
 			Err(err).
 			Msg("failed to register handlers")

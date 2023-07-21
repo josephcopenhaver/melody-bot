@@ -30,7 +30,7 @@ func ClearCache() HandleMessageCreate {
 
 // TODO: clear media meta cache and playlist cache
 
-func clearCache(ctx context.Context, s *discordgo.Session, m *discordgo.MessageCreate, _ *service.Player, _ map[string]string, b *service.Brain) error {
+func clearCache(_ context.Context, _ *discordgo.Session, m *discordgo.MessageCreate, _ *service.Player, _ map[string]string, b *service.Brain) error {
 
 	err := b.StopAllPlayers(m)
 	if err != nil {

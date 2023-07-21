@@ -11,6 +11,7 @@ import (
 	"github.com/rs/zerolog/pkgerrors"
 )
 
+//nolint:gochecknoinits
 func init() {
 	var out io.Writer = os.Stderr
 
@@ -18,7 +19,8 @@ func init() {
 	zerolog.SetGlobalLevel(zerolog.TraceLevel)
 
 	// allow printing stack traces from pkg/errors
-	zerolog.ErrorStackMarshaler = pkgerrors.MarshalStack
+	// code-smell: globals are being set here
+	zerolog.ErrorStackMarshaler = pkgerrors.MarshalStack //nolint:reassign
 
 	// use default golang time marshaller format
 	zerolog.TimeFieldFormat = time.RFC3339

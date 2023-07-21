@@ -1,21 +1,24 @@
 package server
 
 import (
+	"context"
+	"errors"
 	"strings"
 
 	"github.com/bwmarrin/discordgo"
 	"github.com/josephcopenhaver/melody-bot/internal/service"
 	"github.com/josephcopenhaver/melody-bot/internal/service/handlers"
-	. "github.com/josephcopenhaver/melody-bot/internal/service/server/reactions"
+	"github.com/josephcopenhaver/melody-bot/internal/service/server/reactions"
 	"github.com/rs/zerolog"
 	"github.com/rs/zerolog/log"
 )
 
-func (s *Server) Handlers() error {
+//nolint:gocyclo
+func (s *Server) Handlers(ctx context.Context) error {
 
 	// https://discord.com/developers/docs/topics/gateway#event-names
 
-	s.addMuxHandlers()
+	s.addMuxHandlers(ctx)
 
 	s.AddHandler(handlers.Ping())
 
@@ -57,7 +60,7 @@ func (s *Server) Handlers() error {
 		// https://discord.com/developers/docs/topics/gateway#voice-state-update
 		// Sent when someone joins/leaves/moves voice channels. Inner payload is a voice state object.
 
-		if s.ctx.Err() != nil {
+		if ctx.Err() != nil {
 			return
 		}
 
@@ -79,7 +82,7 @@ func (s *Server) Handlers() error {
 			return
 		}
 
-		p := s.Brain.Player(s.ctx, &s.wg, session, evt.VoiceState.GuildID)
+		p := s.Brain.Player(ctx, &s.wg, session, evt.VoiceState.GuildID)
 		if p.HasAudience() {
 			return
 		}
@@ -94,7 +97,7 @@ func (s *Server) Handlers() error {
 		// https://discord.com/developers/docs/topics/gateway#guild-delete
 		// Sent when a guild becomes unavailable during a guild outage, or when the user leaves or is removed from a guild. The inner payload is an unavailable guild object. If the unavailable field is not set, the user was removed from the guild.
 
-		if s.ctx.Err() != nil {
+		if ctx.Err() != nil {
 			return
 		}
 
@@ -110,7 +113,7 @@ func (s *Server) Handlers() error {
 			return
 		}
 
-		p := s.Brain.Player(s.ctx, &s.wg, session, evt.ID)
+		p := s.Brain.Player(ctx, &s.wg, session, evt.ID)
 
 		channelId := p.GetVoiceChannelId()
 		if channelId == "" {
@@ -126,7 +129,7 @@ func (s *Server) Handlers() error {
 		// https://discord.com/developers/docs/topics/gateway#channel-delete
 		// Sent when a channel relevant to the current user is deleted. The inner payload is a channel object.
 
-		if s.ctx.Err() != nil {
+		if ctx.Err() != nil {
 			return
 		}
 
@@ -142,7 +145,7 @@ func (s *Server) Handlers() error {
 			return
 		}
 
-		p := s.Brain.Player(s.ctx, &s.wg, session, evt.Channel.GuildID)
+		p := s.Brain.Player(ctx, &s.wg, session, evt.Channel.GuildID)
 
 		channelId := p.GetVoiceChannelId()
 		if channelId == "" {
@@ -163,7 +166,9 @@ func (s *Server) Handlers() error {
 	return nil
 }
 
-func (srv *Server) addMuxHandlers() {
+//nolint:gocyclo
+func (s *Server) addMuxHandlers(ctx context.Context) {
+	srv := s
 	srv.DiscordSession.AddHandler(func(s *discordgo.Session, m *discordgo.MessageCreate) {
 		var err error
 		var p *service.Player
@@ -173,7 +178,7 @@ func (srv *Server) addMuxHandlers() {
 			return
 		}
 
-		if srv.ctx.Err() != nil {
+		if ctx.Err() != nil {
 			return
 		}
 
@@ -181,7 +186,7 @@ func (srv *Server) addMuxHandlers() {
 
 		if m.GuildID != "" {
 
-			p = srv.Brain.Player(srv.ctx, &srv.wg, s, m.GuildID)
+			p = srv.Brain.Player(ctx, &srv.wg, s, m.GuildID)
 
 			// verify the user is giving me a direct command in a guild channel
 			// if so then run handlers
@@ -293,23 +298,23 @@ func (srv *Server) addMuxHandlers() {
 			logger = lc.Logger()
 		}
 
-		ctx := logger.WithContext(srv.ctx)
+		ctxWithLogger := logger.WithContext(ctx)
 
-		err = s.MessageReactionAdd(m.ChannelID, m.ID, ReactionStatusThinking.String())
+		err = s.MessageReactionAdd(m.ChannelID, m.ID, reactions.StatusThinking.String())
 		if err != nil {
 			logger.Err(err).Msg("failed to react with thinking")
 		} else {
 			defer func() {
-				err := s.MessageReactionRemove(m.ChannelID, m.ID, ReactionStatusThinking.String(), "@me")
+				err := s.MessageReactionRemove(m.ChannelID, m.ID, reactions.StatusThinking.String(), "@me")
 				if err != nil {
 					logger.Err(err).Msg("failed to remove thinking reaction")
 				}
 			}()
 		}
 
-		var reaction ReactionStatus
+		var reaction reactions.Status
 		defer func() {
-			if reaction == ReactionStatusZeroValue {
+			if reaction == reactions.StatusZeroValue {
 				return
 			}
 
@@ -339,11 +344,12 @@ func (srv *Server) addMuxHandlers() {
 				continue
 			}
 
-			err := handler(ctx, s, m, p, srv.Brain)
+			err := handler(ctxWithLogger, s, m, p, srv.Brain)
 			if err != nil {
-				reaction = ReactionStatusErr
+				reaction = reactions.StatusErr
 
-				if v, ok := err.(Reactor); ok {
+				var v reactions.Reactor
+				if ok := errors.As(err, &v); ok {
 					reaction = v.Reaction()
 				}
 
@@ -360,7 +366,7 @@ func (srv *Server) addMuxHandlers() {
 				return
 			}
 
-			reaction = ReactionStatusOK
+			reaction = reactions.StatusOK
 
 			// logger.Info().
 			// 	Str("handler_name", h.Name).
@@ -374,7 +380,7 @@ func (srv *Server) addMuxHandlers() {
 			return
 		}
 
-		reaction = ReactionStatusWarning
+		reaction = reactions.StatusWarning
 
 		// logger.Debug().
 		// 	Str("author_id", m.Author.ID).

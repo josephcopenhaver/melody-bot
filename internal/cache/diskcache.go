@@ -89,7 +89,12 @@ func newDefaultKeyMarshaler[K comparable]() Marshaler[K] {
 		})
 	case string:
 		return NewKeyMarshaler(func(k K) ([]byte, error) {
-			return []byte(any(k).(string)), nil
+			v, ok := any(k).(string)
+			if !ok {
+				panic(errors.New("unreachable"))
+			}
+
+			return []byte(v), nil
 		})
 	}
 
@@ -130,6 +135,7 @@ func NewTranscoder[V any](marshal func(V) ([]byte, error), unmarshal func([]byte
 	return &transcoder[V]{marshal, unmarshal}
 }
 
+//nolint:gocyclo
 func newDefaultTranscoder[V any]() Transcoder[V] {
 	var valIsPointerType bool
 	var av any
@@ -145,12 +151,22 @@ func newDefaultTranscoder[V any]() Transcoder[V] {
 		case binaryTranscoder:
 			return NewTranscoder(
 				func(v V) ([]byte, error) {
-					return any(v).(binaryTranscoder).MarshalBinary()
+					x, ok := any(v).(binaryTranscoder)
+					if !ok {
+						panic(errors.New("unreachable"))
+					}
+
+					return x.MarshalBinary()
 				},
 				func(b []byte) (V, error) {
 					var result, buf V
 
-					if err := any(buf).(binaryTranscoder).UnmarshalBinary(b); err != nil {
+					x, ok := any(buf).(binaryTranscoder)
+					if !ok {
+						panic(errors.New("unreachable"))
+					}
+
+					if err := x.UnmarshalBinary(b); err != nil {
 						return result, err
 					}
 
@@ -161,12 +177,22 @@ func newDefaultTranscoder[V any]() Transcoder[V] {
 		case textTranscoder:
 			return NewTranscoder(
 				func(v V) ([]byte, error) {
-					return any(v).(textTranscoder).MarshalText()
+					x, ok := any(v).(textTranscoder)
+					if !ok {
+						panic(errors.New("unreachable"))
+					}
+
+					return x.MarshalText()
 				},
 				func(b []byte) (V, error) {
 					var result, buf V
 
-					if err := any(buf).(textTranscoder).UnmarshalText(b); err != nil {
+					x, ok := any(buf).(textTranscoder)
+					if !ok {
+						panic(errors.New("unreachable"))
+					}
+
+					if err := x.UnmarshalText(b); err != nil {
 						return result, err
 					}
 
@@ -177,12 +203,22 @@ func newDefaultTranscoder[V any]() Transcoder[V] {
 		case jsonTranscoder:
 			return NewTranscoder(
 				func(v V) ([]byte, error) {
-					return any(v).(jsonTranscoder).MarshalJSON()
+					x, ok := any(v).(jsonTranscoder)
+					if !ok {
+						panic(errors.New("unreachable"))
+					}
+
+					return x.MarshalJSON()
 				},
 				func(b []byte) (V, error) {
 					var result, buf V
 
-					if err := any(buf).(jsonTranscoder).UnmarshalJSON(b); err != nil {
+					x, ok := any(buf).(jsonTranscoder)
+					if !ok {
+						panic(errors.New("unreachable"))
+					}
+
+					if err := x.UnmarshalJSON(b); err != nil {
 						return result, err
 					}
 
@@ -222,7 +258,11 @@ func newDefaultTranscoder[V any]() Transcoder[V] {
 	case []byte:
 		return NewTranscoder(
 			func(v V) ([]byte, error) {
-				b := any(v).([]byte)
+				b, ok := any(v).([]byte)
+				if !ok {
+					panic(errors.New("unreachable"))
+				}
+
 				if b == nil {
 					return nil, nil
 				}
@@ -249,7 +289,11 @@ func newDefaultTranscoder[V any]() Transcoder[V] {
 	case []rune:
 		return NewTranscoder(
 			func(v V) ([]byte, error) {
-				runes := any(v).([]rune)
+				runes, ok := any(v).([]rune)
+				if !ok {
+					panic(errors.New("unreachable"))
+				}
+
 				if runes == nil {
 					return nil, nil
 				}
@@ -270,7 +314,12 @@ func newDefaultTranscoder[V any]() Transcoder[V] {
 	case string:
 		return NewTranscoder(
 			func(v V) ([]byte, error) {
-				return []byte(any(v).(string)), nil
+				x, ok := any(v).(string)
+				if !ok {
+					panic(errors.New("unreachable"))
+				}
+
+				return []byte(x), nil
 			},
 			func(b []byte) (V, error) {
 				var result V
@@ -390,7 +439,7 @@ func NewDiskCache[K comparable, V any](path string, maxSize int, options ...Disk
 	}, nil
 }
 
-func (c *DiskCache[K, V]) Get(k K) (V, bool, error) {
+func (c *DiskCache[K, V]) Get(k K) (V, bool, error) { //nolint:gocritic
 	var result V
 
 	c.rwm.RLock()
@@ -591,7 +640,7 @@ func (c *DiskCache[K, V]) Delete(k K) error {
 	}
 
 	if ramOK {
-		c.size -= 1
+		c.size--
 		delete(c.m, k)
 	}
 
@@ -606,7 +655,7 @@ func (c *DiskCache[K, V]) Delete(k K) error {
 
 func (c *DiskCache[K, V]) prepForNewRecord() {
 	if c.size < c.maxSize {
-		c.size += 1
+		c.size++
 		return
 	}
 

@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"net/http"
 	"net/url"
 	"os"
@@ -34,6 +33,10 @@ const (
 	MediaCacheDir          = ".media-cache/v1"
 	MediaMetadataCacheDir  = ".media-meta-cache/v1"
 	MediaMetadataCacheSize = 1024 * 1024
+)
+
+var (
+	ErrVoiceChannelNotFound = errors.New("could not find voice channel")
 )
 
 type MediaMetaCacheEntry struct {
@@ -76,6 +79,7 @@ var vidMetadataCacheOptions = []cache.DiskCacheOption[string, MediaMetaCacheEntr
 
 var vidMetadataCache *cache.DiskCache[string, MediaMetaCacheEntry]
 
+//nolint:gochecknoinits
 func init() {
 	if v, err := cache.NewDiskCache(MediaMetadataCacheDir, MediaMetadataCacheSize, vidMetadataCacheOptions...); err != nil {
 		panic(err)
@@ -148,8 +152,8 @@ func newCountingReader(r io.Reader) *countingReader {
 	}
 }
 
-func (r *countingReader) Read(p []byte) (n int, err error) {
-	n, err = r.reader.Read(p)
+func (r *countingReader) Read(p []byte) (int, error) {
+	n, err := r.reader.Read(p)
 	r.bytesRead += int64(n)
 	return n, err
 }
@@ -344,6 +348,7 @@ func shellEscape(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
 }
 
+//nolint:gocyclo
 func (as *audioStream) ReadCloser(ctx context.Context, wg *sync.WaitGroup) (io.ReadCloser, error) {
 
 	if as.Cached() {
@@ -397,7 +402,7 @@ func (as *audioStream) ReadCloser(ctx context.Context, wg *sync.WaitGroup) (io.R
 		return nil, fmt.Errorf("failed to make cache directory: %s: %w", cacheDir, err)
 	}
 
-	tmpF, err := ioutil.TempFile(cacheDir, "melody-bot.*.audio.s16le.tmp")
+	tmpF, err := os.CreateTemp(cacheDir, "melody-bot.*.audio.s16le.tmp")
 	if err != nil {
 		return nil, err
 	}
@@ -555,10 +560,10 @@ func (as *audioStream) ReadCloser(ctx context.Context, wg *sync.WaitGroup) (io.R
 					Str("dst_path", as.dstFilePath).
 					Msg("cached audio stream")
 
-				return i, err
-			} else {
-				cancel()
+				return i, nil
 			}
+
+			cancel()
 
 			return i, err
 		}
@@ -585,7 +590,7 @@ func (as *audioStream) DownloadAndTranscode(ctx context.Context) error {
 		return fmt.Errorf("failed to make cache directory: %s: %w", cacheDir, err)
 	}
 
-	tmpF, err := ioutil.TempFile(cacheDir, "melody-bot.*.audio.s16le.tmp")
+	tmpF, err := os.CreateTemp(cacheDir, "melody-bot.*.audio.s16le.tmp")
 	if err != nil {
 		return err
 	}
@@ -765,10 +770,7 @@ func handlePlayRequest(ctx context.Context, s *discordgo.Session, m *discordgo.M
 		}
 	}()
 
-	if handled, err := processPlaylist(ctx, s, m, p, play, closePlayPack, urlStr); err != nil {
-		closePlayPack()
-		return err
-	} else if handled {
+	if processPlaylist(ctx, s, m, p, play, closePlayPack, urlStr) {
 		// handling async, don't close the play package
 		return nil
 	}
@@ -780,19 +782,23 @@ func handlePlayRequest(ctx context.Context, s *discordgo.Session, m *discordgo.M
 
 var ErrPanicInPlaylistLoader = errors.New("Panic in playlist loader")
 
-func processPlaylist(ctx context.Context, s *discordgo.Session, m *discordgo.MessageCreate, p *service.Player, play func(context.Context, *audioStream), closePlayPack func(), urlStr string) (bool, error) {
+//nolint:gocyclo
+func processPlaylist(ctx context.Context, s *discordgo.Session, m *discordgo.MessageCreate, p *service.Player, play func(context.Context, *audioStream), closePlayPack func(), urlStr string) bool {
 	var result bool
 
 	ac := newYoutubeApiClient()
 
 	var u *url.URL
-	if v, err := url.Parse(urlStr); err != nil || v == nil {
-		log.Ctx(ctx).Debug().
-			Err(err).
-			Str("url", urlStr).
-			Msg("failed to parse url argument")
-		return result, nil
-	} else {
+	{
+		v, err := url.Parse(urlStr)
+		if err != nil || v == nil {
+			log.Ctx(ctx).Debug().
+				Err(err).
+				Str("url", urlStr).
+				Msg("failed to parse url argument")
+			return result
+		}
+
 		u = v
 	}
 
@@ -804,7 +810,7 @@ func processPlaylist(ctx context.Context, s *discordgo.Session, m *discordgo.Mes
 		log.Ctx(ctx).Debug().
 			Str("url", urlStr).
 			Msg("not a playlist url")
-		return result, nil
+		return result
 	}
 
 	// take ownership of the request handling context:
@@ -872,13 +878,9 @@ func processPlaylist(ctx context.Context, s *discordgo.Session, m *discordgo.Mes
 
 			// ensure that the bot is first in a voice channel
 			{
-				c, err := findVoiceChannel(s, m, p)
+				_, err := findVoiceChannel(s, m, p)
 				if err != nil {
 					return fmt.Errorf("failed to auto-join a voice channel: %w", err)
-				}
-
-				if c == nil {
-					return errors.New("not in a voice channel")
 				}
 			}
 
@@ -909,11 +911,11 @@ func processPlaylist(ctx context.Context, s *discordgo.Session, m *discordgo.Mes
 
 					p.BroadcastTextMessage("Failed to queue " + as.srcVideoUrlStr)
 
-					numFailed += 1
+					numFailed++
 					continue
 				}
 
-				numSuccess += 1
+				numSuccess++
 
 				if err := ctx.Err(); err != nil {
 					return err
@@ -933,7 +935,7 @@ func processPlaylist(ctx context.Context, s *discordgo.Session, m *discordgo.Mes
 		}()
 	}()
 
-	return result, nil
+	return result
 }
 
 func playAfterTranscode(ctx context.Context, s *discordgo.Session, m *discordgo.MessageCreate, p *service.Player, play func(context.Context, *audioStream), urlStr string) error {
@@ -944,13 +946,9 @@ func playAfterTranscode(ctx context.Context, s *discordgo.Session, m *discordgo.
 
 	// ensure that the bot is first in a voice channel
 	{
-		c, err := findVoiceChannel(s, m, p)
+		_, err := findVoiceChannel(s, m, p)
 		if err != nil {
 			return fmt.Errorf("failed to auto-join a voice channel: %w", err)
-		}
-
-		if c == nil {
-			return errors.New("not in a voice channel")
 		}
 	}
 
@@ -973,6 +971,7 @@ func playAfterTranscode(ctx context.Context, s *discordgo.Session, m *discordgo.
 	return nil
 }
 
+//nolint:unparam
 func findVoiceChannel(s *discordgo.Session, m *discordgo.MessageCreate, p *service.Player) (*discordgo.VoiceConnection, error) {
 
 	result := func() *discordgo.VoiceConnection {
@@ -1003,13 +1002,12 @@ func findVoiceChannel(s *discordgo.Session, m *discordgo.MessageCreate, p *servi
 	}
 
 	if chanID == "" {
-		return nil, nil
+		return nil, ErrVoiceChannelNotFound
 	}
 
 	mute := false
 	deaf := true
 
-	err = nil
 	for tryCount := 0; tryCount < 6; tryCount++ {
 		result, err = s.ChannelVoiceJoin(m.GuildID, chanID, mute, deaf) // can take up to 10 seconds to return a timeout error
 		if err == nil {

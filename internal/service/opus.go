@@ -14,6 +14,7 @@ const (
 	SampleMaxBytes = SampleSize * BytesPerInt16 * NumChannels
 )
 
+//nolint:gochecknoinits
 func init() {
 	// verify on startup SampleMaxBytes is correct
 

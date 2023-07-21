@@ -16,7 +16,6 @@ type EventHandlers struct {
 }
 
 type Server struct {
-	ctx            context.Context
 	wg             sync.WaitGroup
 	DiscordSession *discordgo.Session
 	EventHandlers  EventHandlers
@@ -37,8 +36,6 @@ func (s *Server) ListenAndServe(ctx context.Context) (err_result error) {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-
-	s.ctx = ctx
 
 	sd := handlers.SerialDownloader()
 	sd.Start(ctx)

@@ -104,10 +104,12 @@ func (tr *serialTaskRunner) Start(ctx context.Context) {
 
 var serialDownloader *serialTaskRunner
 
+//nolint:gochecknoinits
 func init() {
 	serialDownloader = newSerialTaskRunner(128)
 }
 
+//nolint:revive
 func SerialDownloader() *serialTaskRunner {
 	return serialDownloader
 }
@@ -132,7 +134,7 @@ func Cache() HandleMessageCreate {
 					return downloadPlaylistAudioStreamsAsync(ctx, p, u.String())
 				}
 
-				return downloadAudioStreamAsync(ctx, p, u.String())
+				return downloadAudioStreamInBackground(p, u.String())
 			},
 		),
 	)
@@ -140,7 +142,7 @@ func Cache() HandleMessageCreate {
 
 var ErrPanicInCacher = errors.New("Panic in cacher")
 
-func downloadAudioStreamAsync(ctx context.Context, p *service.Player, urlStr string) error {
+func downloadAudioStreamInBackground(p *service.Player, urlStr string) error {
 
 	as := &audioStream{
 		srcVideoUrlStr:   urlStr,
@@ -192,11 +194,11 @@ func downloadPlaylistAudioStreamsAsync(ctx context.Context, p *service.Player, u
 
 			p.BroadcastTextMessage("Failed to queue " + as.srcVideoUrlStr)
 
-			numFailed += 1
+			numFailed++
 			continue
 		}
 
-		numSuccess += 1
+		numSuccess++
 
 		if err := ctx.Err(); err != nil {
 			return err

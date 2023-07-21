@@ -267,7 +267,6 @@ type PlayCall struct {
 }
 
 type Player struct {
-	ctx            context.Context
 	wg             *sync.WaitGroup
 	mutex          sync.RWMutex
 	memory         atomic.Value
@@ -284,7 +283,6 @@ type Player struct {
 func NewPlayer(ctx context.Context, wg *sync.WaitGroup, s *discordgo.Session, guildId string) *Player {
 
 	p := &Player{
-		ctx:            ctx,
 		wg:             wg,
 		discordSession: s,
 		discordGuildId: guildId,
@@ -300,9 +298,9 @@ func NewPlayer(ctx context.Context, wg *sync.WaitGroup, s *discordgo.Session, gu
 	})
 
 	wg.Add(1)
-	go p.playerGoroutine(wg)
+	go p.playerGoroutine(ctx, wg)
 	wg.Add(1)
-	go p.playPackGoroutine(wg)
+	go p.playPackGoroutine(ctx, wg)
 
 	return p
 }
@@ -467,12 +465,13 @@ func (p *Player) withMemoryErr(f func(m *PlayerMemory) error) error {
 func (p *Player) withMemory(f func(m *PlayerMemory)) {
 
 	// will never actually have an error
-	_ = p.withMemoryErr(func(m *PlayerMemory) error {
+	ignoredErr := p.withMemoryErr(func(m *PlayerMemory) error {
 
 		f(m)
 
 		return nil
 	})
+	_ = ignoredErr
 }
 
 func (p *Player) Reset(srcEvt interface{}) {
@@ -536,7 +535,7 @@ func (p *Player) previousTrack(offset int) {
 		for offset > 0 {
 			offset--
 
-			m.currentTrackIdx -= 1
+			m.currentTrackIdx--
 			if m.currentTrackIdx < 0 {
 				m.currentTrackIdx = len(m.tracks) - 1
 			}
@@ -569,7 +568,7 @@ func (p *Player) Previous(srcEvt interface{}) {
 	p.signalChan <- TracedSignal{srcEvt, SignalPrevious, nil}
 }
 
-func (p *Player) CycleRepeatMode(srcEvt interface{}) string {
+func (p *Player) CycleRepeatMode() string {
 	var result string
 
 	p.withMemory(func(m *PlayerMemory) {
@@ -659,7 +658,7 @@ func (p *Player) RemoveTrack(url string) bool {
 		m.tracks = m.tracks[:len(m.tracks)-1]
 
 		if m.currentTrackIdx >= i {
-			m.currentTrackIdx -= 1
+			m.currentTrackIdx--
 		}
 	})
 
@@ -690,7 +689,7 @@ func (p *Player) GetPlaylist() Playlist {
 	return result
 }
 
-func (p *Player) setDefaultTextChannel(s Signal, v interface{}) {
+func (p *Player) setDefaultTextChannel(_ Signal, v interface{}) {
 
 	switch e := v.(type) {
 	case *discordgo.MessageCreate:
@@ -779,7 +778,9 @@ func (p *Player) debug() *zerolog.Event {
 		Str("guild_id", p.discordGuildId)
 }
 
-func (p *Player) Enqueue(playPack <-chan PlayCall) (result bool) {
+func (p *Player) Enqueue(playPack <-chan PlayCall) bool {
+	var result bool
+
 	defer func() {
 		// TODO: unhackify this in some fashion
 		// should never attempt to offer to the channel if it is closed
@@ -790,14 +791,15 @@ func (p *Player) Enqueue(playPack <-chan PlayCall) (result bool) {
 
 	p.playPacks <- playPack
 
-	return true
+	result = true
+	return result
 }
 
-func (p *Player) playPackGoroutine(wg *sync.WaitGroup) {
+func (p *Player) playPackGoroutine(ctx context.Context, wg *sync.WaitGroup) {
 	defer wg.Done()
 	defer close(p.playPacks)
 
-	doneChan := p.ctx.Done()
+	doneChan := ctx.Done()
 
 	var done bool
 	for !done {
@@ -850,18 +852,18 @@ func (p *Player) playPackGoroutine(wg *sync.WaitGroup) {
 	}
 }
 
-func (p *Player) playerGoroutine(wg *sync.WaitGroup) {
+func (p *Player) playerGoroutine(ctx context.Context, wg *sync.WaitGroup) {
 	defer wg.Done()
 
 	defer func() {
-		if p.ctx.Err() == nil {
+		if ctx.Err() == nil {
 			p.debug().Msg("player: permanently broken") // should never happen
 		}
 	}()
 
 	p.debug().Msg("player: starting")
 
-	doneChan := p.ctx.Done()
+	doneChan := ctx.Done()
 	go func() {
 		<-doneChan
 		p.signalChan <- TracedSignal{nil, SignalDispose, nil}
@@ -887,9 +889,9 @@ func (p *Player) playerGoroutine(wg *sync.WaitGroup) {
 						Msg("player: recovered from panic")
 				}
 			}()
-			err := p.playerStateMachine()
+			err := p.playerStateMachine(ctx)
 			if err != nil {
-				if err == ErrDisposed {
+				if errors.Is(err, ErrDisposed) {
 					done = true
 					return
 				}
@@ -917,7 +919,8 @@ func (p *Player) playerGoroutine(wg *sync.WaitGroup) {
 
 var ErrDisposed = errors.New("player disposed")
 
-func (p *Player) playerStateMachine() error {
+//nolint:gocyclo
+func (p *Player) playerStateMachine(ctx context.Context) error {
 	var err error
 	var sendChan chan<- []byte
 
@@ -942,7 +945,11 @@ func (p *Player) playerStateMachine() error {
 		case SignalPlay:
 			hasAudience := false
 
-			pr := s.signalPayload.(*playRequest)
+			pr, ok := s.signalPayload.(*playRequest)
+			if !ok {
+				panic(errors.New("unreachable"))
+			}
+
 			isSyncCall := p.stateUnchangedSince(pr.pslc)
 
 			var ctxExpired bool
@@ -1002,7 +1009,11 @@ func (p *Player) playerStateMachine() error {
 		case SignalPlay:
 			hasAudience := false
 
-			pr := s.signalPayload.(*playRequest)
+			pr, ok := s.signalPayload.(*playRequest)
+			if !ok {
+				panic(errors.New("unreachable"))
+			}
+
 			isSyncCall := p.stateUnchangedSince(pr.pslc)
 
 			var ctxExpired bool
@@ -1070,22 +1081,21 @@ func (p *Player) playerStateMachine() error {
 	if track == nil {
 		p.setState(StateIdle)
 		return nil
-	} else {
-
-		msg := "now playing: " + track.SrcUrlStr()
-		if track.AuthorMention != "" {
-			msg += " ( added by " + track.AuthorMention + " )"
-		}
-
-		p.broadcastTextMessage(msg)
 	}
 
-	pctx := p.ctx
+	msg := "now playing: " + track.SrcUrlStr()
+	if track.AuthorMention != "" {
+		msg += " ( added by " + track.AuthorMention + " )"
+	}
+
+	p.broadcastTextMessage(msg)
+
+	pctx := ctx
 	if pctx.Err() != nil {
-		return nil
+		return ErrDisposed
 	}
 
-	ctx, cancel := context.WithCancel(p.ctx)
+	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 
 	f, err := track.ReadCloser(ctx, p.wg)
@@ -1130,7 +1140,10 @@ func (p *Player) playerStateMachine() error {
 					return nil
 				}
 			case SignalPlay:
-				pr := s.signalPayload.(*playRequest)
+				pr, ok := s.signalPayload.(*playRequest)
+				if !ok {
+					panic(errors.New("unreachable"))
+				}
 
 				var ctxExpired bool
 				p.withMemory(func(m *PlayerMemory) {
@@ -1182,7 +1195,11 @@ func (p *Player) playerStateMachine() error {
 						sendChan = nil
 					case SignalPlay:
 
-						pr := s.signalPayload.(*playRequest)
+						pr, ok := s.signalPayload.(*playRequest)
+						if !ok {
+							panic(errors.New("unreachable"))
+						}
+
 						isSyncCall := p.stateUnchangedSince(pr.pslc)
 
 						var ctxExpired bool

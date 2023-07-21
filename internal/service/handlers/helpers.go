@@ -63,25 +63,25 @@ func newWordMatcher(requirePlayer bool, words []string, handler func(context.Con
 	}
 }
 
-func newWordMatcherWithBrain(requirePlayer bool, words []string, handler func(context.Context, *discordgo.Session, *discordgo.MessageCreate, *service.Player, *service.Brain) error) func(*service.Player, string) func(context.Context, *discordgo.Session, *discordgo.MessageCreate, *service.Player, *service.Brain) error {
-	return func(p *service.Player, s string) func(context.Context, *discordgo.Session, *discordgo.MessageCreate, *service.Player, *service.Brain) error {
+// func newWordMatcherWithBrain(requirePlayer bool, words []string, handler func(context.Context, *discordgo.Session, *discordgo.MessageCreate, *service.Player, *service.Brain) error) func(*service.Player, string) func(context.Context, *discordgo.Session, *discordgo.MessageCreate, *service.Player, *service.Brain) error {
+// 	return func(p *service.Player, s string) func(context.Context, *discordgo.Session, *discordgo.MessageCreate, *service.Player, *service.Brain) error {
 
-		if p == nil && requirePlayer {
-			return nil
-		}
+// 		if p == nil && requirePlayer {
+// 			return nil
+// 		}
 
-		s = strings.TrimSpace(s)
-		for _, w := range words {
-			if w == s {
-				return func(ctx context.Context, s *discordgo.Session, m *discordgo.MessageCreate, p *service.Player, b *service.Brain) error {
-					return handler(ctx, s, m, p, b)
-				}
-			}
-		}
+// 		s = strings.TrimSpace(s)
+// 		for _, w := range words {
+// 			if w == s {
+// 				return func(ctx context.Context, s *discordgo.Session, m *discordgo.MessageCreate, p *service.Player, b *service.Brain) error {
+// 					return handler(ctx, s, m, p, b)
+// 				}
+// 			}
+// 		}
 
-		return nil
-	}
-}
+// 		return nil
+// 	}
+// }
 
 func newRegexMatcher(requirePlayer bool, re *regexp.Regexp, handler func(context.Context, *discordgo.Session, *discordgo.MessageCreate, *service.Player, map[string]string) error) func(*service.Player, string) func(context.Context, *discordgo.Session, *discordgo.MessageCreate, *service.Player) error {
 	return func(p *service.Player, s string) func(context.Context, *discordgo.Session, *discordgo.MessageCreate, *service.Player) error {
