@@ -1,62 +1,127 @@
 package logging
 
 import (
+	"context"
+	"errors"
 	"io"
 	"os"
-	"strings"
-	"time"
+	"sync"
 
-	"github.com/rs/zerolog"
-	"github.com/rs/zerolog/log"
-	"github.com/rs/zerolog/pkgerrors"
+	"golang.org/x/exp/slog"
 )
+
+func newLogger(level slog.Level) *slog.Logger {
+	out := io.Writer(os.Stderr)
+
+	return slog.New(slog.NewJSONHandler(out, &slog.HandlerOptions{
+		AddSource: true,
+		Level:     level,
+	}))
+}
+
+var logger *slog.Logger
 
 //nolint:gochecknoinits
 func init() {
-	var out io.Writer = os.Stderr
-
-	// set the default log level
-	zerolog.SetGlobalLevel(zerolog.TraceLevel)
-
-	// allow printing stack traces from pkg/errors
-	// code-smell: globals are being set here
-	zerolog.ErrorStackMarshaler = pkgerrors.MarshalStack //nolint:reassign
-
-	// use default golang time marshaller format
-	zerolog.TimeFieldFormat = time.RFC3339
-
-	// // report only line number that generates the log entry
-	// zerolog.CallerFieldName = "line"
-	// zerolog.CallerMarshalFunc = func(file string, line int) string {
-	// 	return strconv.Itoa(line)
-	// }
-
-	// default to using the console writer unless user overrides
-	if strings.ToLower(os.Getenv("LOG_FORMAT")) != "json" {
-		out = zerolog.ConsoleWriter{
-			Out: out,
-		}
-	}
-
-	// place line indicators - Caller
-	// add stacktrace on .Err() - Stack
-	// include timestamps in output - Timestamp
-	log.Logger = zerolog.New(out).
-		With().
-		Caller().
-		Stack().
-		Timestamp().
-		Logger()
+	logger = newLogger(slog.LevelInfo)
 }
 
-// SetGlobalLevel should only be called once, and before goroutines are spawned
-func SetGlobalLevel(logLevelStr string) error {
-	logLevel, err := zerolog.ParseLevel(strings.ToLower(logLevelStr))
-	if err != nil {
+// SetDefaultLevel should only be called once, and before goroutines are spawned
+func SetDefaultLevel(logLevelStr string) error {
+
+	var newLevel slog.Level
+	if err := newLevel.UnmarshalText([]byte(logLevelStr)); err != nil {
 		return err
 	}
 
-	zerolog.SetGlobalLevel(logLevel)
+	logger = newLogger(newLevel)
+
+	slog.SetDefault(logger)
 
 	return nil
+}
+
+type loggerCtxKey struct{}
+
+func AddToContext(ctx context.Context, logger *slog.Logger) context.Context {
+	return context.WithValue(ctx, loggerCtxKey{}, logger)
+}
+
+type logResolver struct {
+	f func() *slog.Logger
+	sync.RWMutex
+	logger *slog.Logger
+}
+
+func (lr *logResolver) Get() *slog.Logger {
+	lr.RLock()
+	cleanup := lr.RUnlock
+	defer func() {
+		if f := cleanup; f != nil {
+			cleanup = nil
+			f()
+		}
+	}()
+
+	if logger := lr.logger; logger != nil {
+		return logger
+	}
+
+	if f := cleanup; f != nil {
+		cleanup = nil
+		f()
+	}
+	lr.Lock()
+	cleanup = lr.Unlock
+
+	if logger := lr.logger; logger != nil {
+		return logger
+	}
+
+	lr.logger = lr.f()
+	lr.f = nil
+
+	return lr.logger
+}
+
+var logResolverPool sync.Pool = sync.Pool{
+	New: func() any {
+		return &logResolver{}
+	},
+}
+
+func AddResolverToContext(ctx context.Context, f func() *slog.Logger) (context.Context, context.CancelFunc) {
+	if f == nil {
+		panic(errors.New("log resolver function must not be nil"))
+	}
+
+	v := logResolverPool.Get().(*logResolver)
+	v.f = f
+	v.logger = nil
+
+	var oncer sync.Once
+	return context.WithValue(ctx, loggerCtxKey{}, v), func() {
+		oncer.Do(func() {
+			v.f = nil
+			v.logger = nil
+			logResolverPool.Put(v)
+		})
+	}
+}
+
+func Context(ctx context.Context) *slog.Logger {
+	ctxVal := ctx.Value(loggerCtxKey{})
+	if ctxVal == nil {
+		return slog.Default()
+	}
+
+	switch v := ctxVal.(type) {
+	case *slog.Logger:
+		return v
+	case *logResolver:
+		return v.Get()
+	default:
+	}
+
+	return slog.Default()
 }

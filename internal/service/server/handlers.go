@@ -6,11 +6,11 @@ import (
 	"strings"
 
 	"github.com/bwmarrin/discordgo"
+	"github.com/josephcopenhaver/melody-bot/internal/logging"
 	"github.com/josephcopenhaver/melody-bot/internal/service"
 	"github.com/josephcopenhaver/melody-bot/internal/service/handlers"
 	"github.com/josephcopenhaver/melody-bot/internal/service/server/reactions"
-	"github.com/rs/zerolog"
-	"github.com/rs/zerolog/log"
+	"golang.org/x/exp/slog"
 )
 
 //nolint:gocyclo
@@ -64,8 +64,9 @@ func (s *Server) Handlers(ctx context.Context) error {
 			return
 		}
 
-		log.Debug().
-			Msg("evt: join/leave/move voice channel")
+		slog.Debug(
+			"evt: join/leave/move voice channel",
+		)
 
 		// if not a destructive event then short circuit
 		if evt.VoiceState == nil || evt.VoiceState.GuildID == "" || evt.VoiceState.ChannelID == "" {
@@ -87,8 +88,9 @@ func (s *Server) Handlers(ctx context.Context) error {
 			return
 		}
 
-		log.Debug().
-			Msg("no audience, pausing")
+		slog.Debug(
+			"no audience, pausing",
+		)
 
 		p.Pause(evt)
 	})
@@ -101,8 +103,9 @@ func (s *Server) Handlers(ctx context.Context) error {
 			return
 		}
 
-		log.Debug().
-			Msg("evt: guild unavailable")
+		slog.Debug(
+			"evt: guild unavailable",
+		)
 
 		if evt.ID == "" || evt.Unavailable {
 			return
@@ -133,8 +136,9 @@ func (s *Server) Handlers(ctx context.Context) error {
 			return
 		}
 
-		log.Debug().
-			Msg("evt: channel deleted")
+		slog.Debug(
+			"evt: channel deleted",
+		)
 
 		if evt.Channel == nil || evt.Channel.GuildID == "" {
 			return
@@ -202,16 +206,19 @@ func (s *Server) addMuxHandlers(ctx context.Context) {
 					return prefix
 				}
 
-				// log.Debug().
-				// 	Str("channel_message", trimMsg).
-				// 	Str("prefix", prefix).
-				// 	Str("mention", "user").
-				// 	Msg("no match")
+				// slog.Debug(
+				// 	"no match",
+				// 	"channel_message", trimMsg,
+				// 	"prefix", prefix,
+				// 	"mention", "user",
+				// )
 
 				member, err := s.State.Member(m.GuildID, s.State.User.ID)
 				if err != nil {
-					log.Err(err).
-						Msg("failed to get my own member status")
+					slog.Error(
+						"failed to get my own member status",
+						"error", err,
+					)
 					return ""
 				}
 
@@ -220,27 +227,31 @@ func (s *Server) addMuxHandlers(ctx context.Context) {
 					return prefix
 				}
 
-				// log.Debug().
-				// 	Str("channel_message", trimMsg).
-				// 	Str("prefix", prefix).
-				// 	Str("mention", "member").
-				// 	Msg("no match")
+				// slog.Debug(
+				// 	"no match",
+				// 	"channel_message", trimMsg,
+				// 	"prefix", prefix,
+				// 	"mention", "member",
+				// )
 
 				for _, roleId := range member.Roles {
 
 					r, err := s.State.Role(m.GuildID, roleId)
 					if err != nil {
-						log.Err(err).
-							Str("role_id", roleId).
-							Msg("failed to get role info")
+						slog.Error(
+							"failed to get role info",
+							"error", err,
+							"role_id", roleId,
+						)
 						continue
 					}
 
 					if r.Name != s.State.User.Username {
-						// log.Debug().
-						// 	Str("role_name", r.Name).
-						// 	Str("user_name", s.State.User.Username).
-						// 	Msg("role name does not match")
+						// slog.Debug(
+						// 	"role name does not match",
+						// 	"role_name", r.Name,
+						// 	"user_name", s.State.User.Username,
+						// )
 						continue
 					}
 
@@ -249,20 +260,22 @@ func (s *Server) addMuxHandlers(ctx context.Context) {
 						return prefix
 					}
 
-					// log.Debug().
-					// 	Str("channel_message", trimMsg).
-					// 	Str("prefix", prefix).
-					// 	Str("mention", "role").
-					// 	Msg("no match")
+					// slog.Debug(
+					// 	"no match",
+					// 	"channel_message", trimMsg,
+					// 	"prefix", prefix,
+					// 	"mention", "role",
+					// )
 				}
 
 				return ""
 			}()
 
 			if prefix == "" {
-				// log.Debug().
-				// 	Str("channel_message", trimMsg).
-				// 	Msg("message not for me")
+				// slog.Debug(
+				// 	"message not for me",
+				// 	"channel_message", trimMsg,
+				// )
 				return
 			}
 
@@ -271,9 +284,10 @@ func (s *Server) addMuxHandlers(ctx context.Context) {
 				withoutMention := trimMsg[len(prefix):]
 				newTrimMsg := strings.TrimSpace(withoutMention)
 				if newTrimMsg == withoutMention {
-					// log.Debug().
-					// 	Str("channel_message", trimMsg).
-					// 	Msg("not well formed for me")
+					// slog.Debug(
+					// 	"not well formed for me",
+					// 	"channel_message", trimMsg,
+					// )
 					return
 				}
 
@@ -281,33 +295,40 @@ func (s *Server) addMuxHandlers(ctx context.Context) {
 			}
 		}
 
-		logger := log.Level(zerolog.DebugLevel)
+		var logger *slog.Logger
 		{
-			lc := logger.With().
-				Str("guild_id", m.GuildID).
-				Str("channel_id", m.ChannelID).
-				Str("message_id", m.Message.ID).
-				Time("message_timestamp", m.Timestamp).
-				Str("author_id", m.Author.ID).
-				Str("author_username", m.Author.Username)
+			log := slog.With(
+				"guild_id", m.GuildID,
+				"channel_id", m.ChannelID,
+				"message_id", m.Message.ID,
+				"message_timestamp", m.Timestamp,
+				"author_id", m.Author.ID,
+				"author_username", m.Author.Username,
+			)
 
 			if m.EditedTimestamp != nil {
-				lc = lc.Time("last_edited_at", *m.EditedTimestamp)
+				log = log.With("last_edited_at", *m.EditedTimestamp)
 			}
 
-			logger = lc.Logger()
+			logger = log
 		}
 
-		ctxWithLogger := logger.WithContext(ctx)
+		ctxWithLogger := logging.AddToContext(ctx, logger)
 
 		err = s.MessageReactionAdd(m.ChannelID, m.ID, reactions.StatusThinking.String())
 		if err != nil {
-			logger.Err(err).Msg("failed to react with thinking")
+			slog.Error(
+				"failed to react with thinking",
+				"error", err,
+			)
 		} else {
 			defer func() {
 				err := s.MessageReactionRemove(m.ChannelID, m.ID, reactions.StatusThinking.String(), "@me")
 				if err != nil {
-					logger.Err(err).Msg("failed to remove thinking reaction")
+					slog.Error(
+						"failed to remove thinking reaction",
+						"error", err,
+					)
 				}
 			}()
 		}
@@ -325,13 +346,19 @@ func (s *Server) addMuxHandlers(ctx context.Context) {
 						err = v
 					}
 
-					logger.Error().Err(err).Msg("panicked trying to react")
+					slog.Error(
+						"panicked trying to react",
+						"error", err,
+					)
 				}
 			}()
 
 			err := s.MessageReactionAdd(m.ChannelID, m.ID, reaction.String())
 			if err != nil {
-				logger.Err(err).Msg("failed to react")
+				slog.Error(
+					"failed to react",
+					"error", err,
+				)
 			}
 		}()
 
@@ -353,15 +380,19 @@ func (s *Server) addMuxHandlers(ctx context.Context) {
 					reaction = v.Reaction()
 				}
 
-				logger.Err(err).
-					Str("handler_name", h.Name).
-					Str("message_content", m.Message.Content).
-					Msg("error in handler")
+				slog.Error(
+					"error in handler",
+					"error", err,
+					"handler_name", h.Name,
+					"message_content", m.Message.Content,
+				)
 
 				_, err := s.ChannelMessageSend(m.ChannelID, "error: "+err.Error())
 				if err != nil {
-					logger.Err(err).
-						Msg("failed to send error reply")
+					slog.Error(
+						"failed to send error reply",
+						"error", err,
+					)
 				}
 				return
 			}
@@ -392,8 +423,10 @@ func (s *Server) addMuxHandlers(ctx context.Context) {
 
 		_, err = s.ChannelMessageSend(m.ChannelID, "command not recognized")
 		if err != nil {
-			logger.Err(err).
-				Msg("failed to send default reply")
+			slog.Error(
+				"failed to send default reply",
+				"error", err,
+			)
 		}
 	})
 }
@@ -406,8 +439,11 @@ func (s *Server) AddHandler(v interface{}) {
 		s.EventHandlers.MessageCreate = append(s.EventHandlers.MessageCreate, h)
 
 	default:
-		log.Fatal().
-			Interface("handler", v).
-			Msg("code-error: failed to register handler")
+		const msg = "code-error: failed to register handler"
+		slog.Error(
+			msg,
+			"handler", v,
+		)
+		panic(errors.New("code-error: failed to register handler"))
 	}
 }

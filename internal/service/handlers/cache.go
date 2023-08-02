@@ -13,7 +13,7 @@ import (
 	"github.com/bwmarrin/discordgo"
 	"github.com/josephcopenhaver/melody-bot/internal/service"
 	"github.com/josephcopenhaver/melody-bot/internal/service/server/reactions"
-	"github.com/rs/zerolog/log"
+	"golang.org/x/exp/slog"
 )
 
 type serialTaskRunner struct {
@@ -90,8 +90,10 @@ func (tr *serialTaskRunner) Start(ctx context.Context) {
 							if !ok {
 								err = errors.New("cause unknown")
 							}
-							log.Err(err).
-								Msg("panic in serial downloader")
+							slog.ErrorContext(ctx,
+								"panic in serial downloader",
+								"error", err,
+							)
 						}
 					}()
 
@@ -188,9 +190,10 @@ func downloadPlaylistAudioStreamsAsync(ctx context.Context, p *service.Player, u
 		}
 
 		if err := as.SelectDownloadURLWithFallbackApiClient(ctx, newYoutubeApiClient); err != nil {
-			log.Ctx(ctx).Err(err).
-				Str("track", as.srcVideoUrlStr).
-				Msg("failed to select download url")
+			slog.ErrorContext(ctx,
+				"failed to select download url",
+				"track", as.srcVideoUrlStr,
+			)
 
 			p.BroadcastTextMessage("Failed to queue " + as.srcVideoUrlStr)
 

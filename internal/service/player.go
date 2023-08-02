@@ -12,8 +12,7 @@ import (
 	"time"
 
 	"github.com/josephcopenhaver/gopus"
-	"github.com/rs/zerolog"
-	"github.com/rs/zerolog/log"
+	"golang.org/x/exp/slog"
 
 	"github.com/bwmarrin/discordgo"
 	"github.com/google/uuid"
@@ -133,7 +132,10 @@ func (m *PlayerMemory) reset() {
 	if vc != nil {
 		err := vc.Disconnect()
 		if err != nil {
-			log.Err(err).Msg("reset: failed to disconnect")
+			slog.Error(
+				"reset: failed to disconnect",
+				"error", err,
+			)
 		}
 	}
 }
@@ -149,26 +151,27 @@ func (m *PlayerMemory) indexOfTrack(url string) int {
 	return -1
 }
 
-func (m *PlayerMemory) play(s State, r *playRequest, debug func() *zerolog.Event) {
+func (m *PlayerMemory) play(s State, r *playRequest, debug func(string, ...any)) {
 
 	if r == nil {
-		debug().Msg("no playRequest in play handler?")
+		debug("no playRequest in play handler?")
 		return
 	}
 
 	if r.track == nil {
-		debug().Msg("no track in play handler?")
+		debug("no track in play handler?")
 		return
 	}
 
 	t := *r.track
 
-	debug().
-		Str("state", s.String()).
-		Int("current_track_idx", m.currentTrackIdx).
-		Int("num_tracks", len(m.tracks)).
-		Str("new_track_url", t.SrcUrlStr()).
-		Msg("play track")
+	debug(
+		"play track",
+		"state", s.String(),
+		"current_track_idx", m.currentTrackIdx,
+		"num_tracks", len(m.tracks),
+		"new_track_url", t.SrcUrlStr(),
+	)
 
 	switch s {
 	case StateDefault:
@@ -193,13 +196,16 @@ func (m *PlayerMemory) play(s State, r *playRequest, debug func() *zerolog.Event
 func (m *PlayerMemory) hasAudience(s *discordgo.Session, guildId string) bool {
 
 	if m.voiceChannelId == "" {
-		log.Error().Msg("player: no voice channel id set, assuming no audience")
+		slog.Error("player: no voice channel id set, assuming no audience")
 		return false
 	}
 
 	g, err := s.State.Guild(guildId)
 	if err != nil || g == nil {
-		log.Err(err).Msg("player: hasAudience: failed to get guild voice states, assuming no audience")
+		slog.Error(
+			"player: hasAudience: failed to get guild voice states, assuming no audience",
+			"error", err,
+		)
 		return false
 	}
 
@@ -222,7 +228,10 @@ func (m *PlayerMemory) hasAudience(s *discordgo.Session, guildId string) bool {
 		// ignore users that are bots
 		u, err := s.User(v.UserID)
 		if err != nil {
-			log.Err(err).Msg("failed to get user info, assuming it is a bot")
+			slog.Error(
+				"failed to get user info, assuming it is a bot",
+				"error", err,
+			)
 			continue
 		} else if u.Bot {
 			continue
@@ -231,10 +240,11 @@ func (m *PlayerMemory) hasAudience(s *discordgo.Session, guildId string) bool {
 		return true
 	}
 
-	log.Error().
-		Int("voice_state_count", len(g.VoiceStates)).
-		Str("guild_id", guildId).
-		Msg("player: found no human voice states")
+	slog.Error(
+		"player: found no human voice states",
+		"voice_state_count", len(g.VoiceStates),
+		"guild_id", guildId,
+	)
 
 	return false
 }
@@ -376,7 +386,7 @@ func (p *Player) nextTrack() *Track {
 	p.withMemory(func(m *PlayerMemory) {
 
 		if len(m.tracks) == 0 {
-			p.debug().Msg("next track called when there is no track list: playback stopping")
+			p.debug("next track called when there is no track list: playback stopping")
 			m.currentTrackIdx = -1
 			return
 		}
@@ -432,13 +442,13 @@ func (p *Player) withCancelLock(f func(m map[*func(error)]struct{})) {
 // you'll likely encounter deadlocks
 func (p *Player) withMemoryErr(f func(m *PlayerMemory) error) error {
 
-	// p.debug().Msg("withMemory: waiting for lock")
+	// p.debug("withMemory: waiting for lock")
 
 	p.mutex.Lock()
 	defer p.mutex.Unlock()
 
-	// defer p.debug().Msg("withMemory: releasing lock")
-	// p.debug().Msg("withMemory: got lock")
+	// defer p.debug("withMemory: releasing lock")
+	// p.debug("withMemory: got lock")
 
 	resp := p.memory.Load()
 
@@ -449,7 +459,10 @@ func (p *Player) withMemoryErr(f func(m *PlayerMemory) error) error {
 
 	err := f(&m)
 	if err != nil {
-		log.Err(err).Msg("error interacting with player memory")
+		slog.Error(
+			"error interacting with player memory",
+			"error", err,
+		)
 		return err
 	}
 
@@ -591,7 +604,10 @@ func (p *Player) SetVoiceConnection(srcEvt interface{}, channelId string, c *dis
 		if c == nil && m.voiceConnection != nil {
 			err := m.voiceConnection.Disconnect()
 			if err != nil {
-				log.Err(err).Msg("SetVoiceConnection: failed to disconnect")
+				slog.Error(
+					"SetVoiceConnection: failed to disconnect",
+					"error", err,
+				)
 			}
 		}
 
@@ -722,15 +738,17 @@ func (p *Player) broadcastTextMessage(s string) {
 		return
 	}
 
-	p.debug().
-		Str("notification_message", s).
-		Msg("broadcasting notification")
+	p.debug(
+		"broadcasting notification",
+		"notification_message", s,
+	)
 
 	_, err := p.discordSession.ChannelMessageSend(c, s)
 	if err != nil {
-		log.Err(err).
-			Str("notification_message", s).
-			Msg("failed to send message")
+		slog.Error(
+			"failed to send message",
+			"notification_message", s,
+		)
 	}
 }
 
@@ -772,10 +790,11 @@ func (p *Player) sendChannel() chan<- []byte {
 	return result
 }
 
-func (p *Player) debug() *zerolog.Event {
-	return log.Debug().
-		Str("state", p.stateMachine.state.String()).
-		Str("guild_id", p.discordGuildId)
+func (p *Player) debug(msg string, args ...any) {
+	slog.With(
+		"state", p.stateMachine.state.String(),
+		"guild_id", p.discordGuildId,
+	).Debug(msg, args...)
 }
 
 func (p *Player) Enqueue(playPack <-chan PlayCall) bool {
@@ -837,7 +856,7 @@ func (p *Player) playPackGoroutine(ctx context.Context, wg *sync.WaitGroup) {
 				var ctxExpired bool
 				p.withMemory(func(m *PlayerMemory) {
 					if as.PlaylistID() != m.id.String() {
-						p.debug().Msg("context is expired")
+						p.debug("context is expired")
 						// context is expired and is no longer valid
 						ctxExpired = true
 					}
@@ -857,11 +876,11 @@ func (p *Player) playerGoroutine(ctx context.Context, wg *sync.WaitGroup) {
 
 	defer func() {
 		if ctx.Err() == nil {
-			p.debug().Msg("player: permanently broken") // should never happen
+			p.debug("player: permanently broken") // should never happen
 		}
 	}()
 
-	p.debug().Msg("player: starting")
+	p.debug("player: starting")
 
 	doneChan := ctx.Done()
 	go func() {
@@ -878,15 +897,12 @@ func (p *Player) playerGoroutine(ctx context.Context, wg *sync.WaitGroup) {
 					prevState := p.stateMachine.state
 					p.stateMachine = newPlayerStateMachine(p.stateMachine.rwMutex)
 					p.reset()
-					evt := log.Error()
-					if e, ok := r.(error); ok {
-						evt = evt.Err(e)
-					} else {
-						evt = evt.Interface("error", r)
-					}
-					evt.Str("state", prevState.String()).
-						Str("guild_id", p.discordGuildId).
-						Msg("player: recovered from panic")
+					slog.Error(
+						"player: recovered from panic",
+						"state", prevState.String(),
+						"guild_id", p.discordGuildId,
+						"error", r,
+					)
 				}
 			}()
 			err := p.playerStateMachine(ctx)
@@ -895,7 +911,10 @@ func (p *Player) playerGoroutine(ctx context.Context, wg *sync.WaitGroup) {
 					done = true
 					return
 				}
-				log.Err(err).Msg("player: error occurred during playback")
+				slog.ErrorContext(ctx,
+					"player: error occurred during playback",
+					"error", err,
+				)
 
 				errCount++
 				var numTracks int
@@ -904,7 +923,10 @@ func (p *Player) playerGoroutine(ctx context.Context, wg *sync.WaitGroup) {
 				})
 				if errCount >= numTracks {
 					// TODO: make this a stop action instead
-					log.Err(err).Msg("player: too many errors occurred, resetting playback")
+					slog.ErrorContext(ctx,
+						"player: too many errors occurred, resetting playback",
+						"error", err,
+					)
 
 					p.reset()
 				}
@@ -924,7 +946,10 @@ func (p *Player) playerStateMachine(ctx context.Context) error {
 	var err error
 	var sendChan chan<- []byte
 
-	p.debug().Str("state", p.stateMachine.state.String()).Msg("player: main loop start: signal check")
+	p.debug(
+		"player: main loop start: signal check",
+		"state", p.stateMachine.state.String(),
+	)
 
 	switch p.stateMachine.state {
 	case StateDefault:
@@ -933,7 +958,10 @@ func (p *Player) playerStateMachine(ctx context.Context) error {
 		// signals recognized when in initial state
 		s := <-p.signalChan
 
-		p.debug().Str("signal", s.sig.String()).Msg("player: got signal before playing track")
+		p.debug(
+			"player: got signal before playing track",
+			"signal", s.sig.String(),
+		)
 
 		p.setDefaultTextChannel(s.sig, s.src)
 
@@ -955,7 +983,7 @@ func (p *Player) playerStateMachine(ctx context.Context) error {
 			var ctxExpired bool
 			p.withMemory(func(m *PlayerMemory) {
 				if pr.playlistID != m.id.String() {
-					p.debug().Msg("context is expired")
+					p.debug("context is expired")
 					ctxExpired = true
 					return
 				}
@@ -991,11 +1019,14 @@ func (p *Player) playerStateMachine(ctx context.Context) error {
 		// signals recognized when in idle state ( stopped or partially errored )
 		s := <-p.signalChan
 
-		p.debug().Str("signal", s.sig.String()).Msg("player: got signal before playing track")
+		p.debug(
+			"player: got signal before playing track",
+			"signal", s.sig.String(),
+		)
 
 		p.setDefaultTextChannel(s.sig, s.src)
 
-		p.debug().Msg("player: default text channel set")
+		p.debug("player: default text channel set")
 
 		switch s.sig {
 		case SignalDispose:
@@ -1019,7 +1050,7 @@ func (p *Player) playerStateMachine(ctx context.Context) error {
 			var ctxExpired bool
 			p.withMemory(func(m *PlayerMemory) {
 				if pr.playlistID != m.id.String() {
-					p.debug().Msg("context is expired")
+					p.debug("context is expired")
 					ctxExpired = true
 					return
 				}
@@ -1053,11 +1084,14 @@ func (p *Player) playerStateMachine(ctx context.Context) error {
 		}
 	}
 
-	p.debug().Msg("player: play check")
+	p.debug("player: play check")
 
 	if p.stateMachine.state != StatePlaying {
 
-		p.debug().Str("state", p.stateMachine.state.String()).Msg("player: not playing")
+		p.debug(
+			"player: not playing",
+			"state", p.stateMachine.state.String(),
+		)
 
 		p.setState(StateIdle)
 
@@ -1069,7 +1103,7 @@ func (p *Player) playerStateMachine(ctx context.Context) error {
 
 		if sendChan == nil {
 
-			p.debug().Msg("player: trying to play, but no broadcast channel is ready")
+			p.debug("player: trying to play, but no broadcast channel is ready")
 
 			p.setState(StateIdle)
 
@@ -1121,14 +1155,17 @@ func (p *Player) playerStateMachine(ctx context.Context) error {
 
 		noSignal := false
 
-		// p.debug().Msg("player: broadcast loop start: signal check")
+		// p.debug("player: broadcast loop start: signal check")
 
 		select {
 		// signal trap 3/4:
 		// type: non-blocking
 		// signals recognized when in playing state
 		case s := <-p.signalChan:
-			p.debug().Str("signal", s.sig.String()).Msg("player: got signal while playing")
+			p.debug(
+				"player: got signal while playing",
+				"signal", s.sig.String(),
+			)
 			p.setDefaultTextChannel(s.sig, s.src)
 
 			switch s.sig {
@@ -1148,7 +1185,7 @@ func (p *Player) playerStateMachine(ctx context.Context) error {
 				var ctxExpired bool
 				p.withMemory(func(m *PlayerMemory) {
 					if pr.playlistID != m.id.String() {
-						p.debug().Msg("context is expired")
+						p.debug("context is expired")
 						ctxExpired = true
 						return
 					}
@@ -1205,7 +1242,7 @@ func (p *Player) playerStateMachine(ctx context.Context) error {
 						var ctxExpired bool
 						p.withMemory(func(m *PlayerMemory) {
 							if pr.playlistID != m.id.String() {
-								p.debug().Msg("context is expired")
+								p.debug("context is expired")
 								ctxExpired = true
 								return
 							}
@@ -1263,7 +1300,7 @@ func (p *Player) playerStateMachine(ctx context.Context) error {
 		}
 
 		if !noSignal {
-			p.debug().Msg("player: processed signal while playing")
+			p.debug("player: processed signal while playing")
 		}
 
 		// TODO: modify discordgo to support a packet pool
@@ -1278,15 +1315,18 @@ func (p *Player) playerStateMachine(ctx context.Context) error {
 			if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
 
 				if flushable, ok := f.(interface{ Flushed() bool }); ok {
-					p.debug().Msg("flushing track")
+					p.debug("flushing track")
 					if flushable.Flushed() {
-						p.debug().Msg("flush: true")
+						p.debug("flush: true")
 						return nil
 					}
-					p.debug().Msg("flush: false")
+					p.debug("flush: false")
 				}
 
-				p.debug().Err(err).Msg("file read interrupted")
+				p.debug(
+					"file read interrupted",
+					"error", err,
+				)
 
 				return nil
 			}
@@ -1296,7 +1336,7 @@ func (p *Player) playerStateMachine(ctx context.Context) error {
 		numBytes, err := opusEncoder.Encode(pcmBuf[:], SampleSize, packet)
 		if numBytes == 0 {
 			if err == nil {
-				p.debug().Msg("opus encode created zero bytes")
+				p.debug("opus encode created zero bytes")
 				return nil
 			}
 

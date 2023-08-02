@@ -78,14 +78,26 @@ RUN test -f /usr/share/bash-completion/bash_completion \
     && echo 'test -f $HOME/.bashrc.local && source $HOME/.bashrc.local' >> /root/.bashrc \
     && true
 
+# install mage builder
+ENV MAGE_VERSION="v1.15.0"
+ENV MAGE_HOME="$GOPATH/src/github.com/magefile/mage"
+RUN mkdir -p "$MAGE_HOME"  \
+    && cd "$MAGE_HOME" \
+    && git init \
+    && git remote add origin https://github.com/magefile/mage.git \
+    && git fetch origin "$MAGE_VERSION" \
+    && git reset --hard FETCH_HEAD \
+    && go run bootstrap.go \
+    && mage -version
+
 # install runtime required packages
-RUN export DEBIAN_FRONTEND=noninteractive \
-    && apt-get update \
-    && apt-get install -y \
-    libopus-dev \
-    libopusfile-dev  \
-    opus-tools \
-    ffmpeg
+RUN mkdir -p /tmp/ffmpeg \
+    && curl -fsSL "https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-$(bash -c 'x="$(uname -m)" && if [[ "$x" = "x86_64" ]]; then printf "amd64" ; elif [[ "$x" == "aarch64" ]]; then printf "arm64" ; else printf "%s" "$x" ; fi')-static.tar.xz" -o /tmp/ffmpeg/ffmpeg.tar.xz \
+    && (cd /tmp/ffmpeg && tar -xf ffmpeg.tar.xz && mv ffmpeg-*-static/ffmpeg ffmpeg) \
+    && mv /tmp/ffmpeg/ffmpeg /bin/ffmpeg \
+    && chmod a+x /bin/ffmpeg \
+    && rm -rf /tmp/ffmpeg \
+    && ffmpeg -version
 
 # # install ffmpeg source files
 # RUN export DEBIAN_FRONTEND=noninteractive \

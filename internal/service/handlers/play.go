@@ -19,12 +19,13 @@ import (
 	"sync"
 	"time"
 
-	"github.com/rs/zerolog/log"
+	"golang.org/x/exp/slog"
 
 	"github.com/bwmarrin/discordgo"
 	"github.com/kkdai/youtube/v2"
 
 	"github.com/josephcopenhaver/melody-bot/internal/cache"
+	"github.com/josephcopenhaver/melody-bot/internal/logging"
 	"github.com/josephcopenhaver/melody-bot/internal/service"
 	"github.com/josephcopenhaver/melody-bot/internal/service/server/reactions"
 )
@@ -206,7 +207,10 @@ func (as *audioStream) SelectDownloadURLWithFallbackApiClient(ctx context.Contex
 
 		ytVid, err = as.ytApiClient.GetVideoContext(ctx, as.srcVideoUrlStr)
 		if err != nil {
-			log.Err(err).Msg("failed to get video context")
+			logging.Context(ctx).ErrorContext(ctx,
+				"failed to get video context",
+				"error", err,
+			)
 			return err
 		}
 
@@ -253,10 +257,11 @@ func (as *audioStream) SelectDownloadURLWithFallbackApiClient(ctx context.Contex
 					newReader.Close()
 				}
 				if newSize == 0 {
-					log.Error().
-						Str("video_url", as.srcVideoUrlStr).
-						Str("format_url", f.URL).
-						Msg("stream size consistently returned zero bytes which should be impossible")
+					logging.Context(ctx).ErrorContext(ctx,
+						"stream size consistently returned zero bytes which should be impossible",
+						"video_url", as.srcVideoUrlStr,
+						"format_url", f.URL,
+					)
 					continue
 				}
 			}
@@ -270,7 +275,10 @@ func (as *audioStream) SelectDownloadURLWithFallbackApiClient(ctx context.Contex
 		}
 
 		if as.Format == nil {
-			log.Error().Int("search_count", len(formats)).Msg("failed to find a usable video format")
+			logging.Context(ctx).ErrorContext(ctx,
+				"failed to find a usable video format",
+				"search_count", len(formats),
+			)
 			return fmt.Errorf("failed to find a usable video format, searched %d", len(formats))
 		}
 	}
@@ -290,25 +298,27 @@ func (as *audioStream) SelectDownloadURLWithFallbackApiClient(ctx context.Contex
 		}
 
 		if err := vidMetadataCache.Set(as.srcVideoUrlStr, cacheV); err != nil {
-			log.Error().
-				Err(err).
-				Str("key", as.srcVideoUrlStr).
-				Interface("VideoFormat", *as.Format).
-				Msg("failed to save a video metadata cache entry")
+			logging.Context(ctx).ErrorContext(ctx,
+				"failed to save a video metadata cache entry",
+				"error", err,
+				"key", as.srcVideoUrlStr,
+				"VideoFormat", *as.Format,
+			)
 		}
 	}
 
-	log.Debug().
-		Str("ID", as.ID).
-		Int("ItagNo", as.ItagNo).
-		Int("Bitrate", as.Bitrate).
-		Str("AudioQuality", as.AudioQuality).
-		Str("AudioSampleRate", as.AudioSampleRate).
-		Str("Quality", as.Quality).
-		Str("QualityLabel", as.QualityLabel).
-		Str("URL", as.URL).
-		Int("AudioChannels", as.AudioChannels).
-		Msg("found video format")
+	logging.Context(ctx).DebugContext(ctx,
+		"found video format",
+		"ID", as.ID,
+		"ItagNo", as.ItagNo,
+		"Bitrate", as.Bitrate,
+		"AudioQuality", as.AudioQuality,
+		"AudioSampleRate", as.AudioSampleRate,
+		"Quality", as.Quality,
+		"QualityLabel", as.QualityLabel,
+		"URL", as.URL,
+		"AudioChannels", as.AudioChannels,
+	)
 
 	return nil
 }
@@ -325,8 +335,10 @@ func (as *audioStream) Cached() bool {
 	info, err := os.Stat(as.dstFilePath)
 	if err != nil {
 		if !os.IsNotExist(err) {
-			log.Err(err).
-				Msg("failed to stat file system")
+			slog.Error(
+				"failed to stat file system",
+				"error", err,
+			)
 			return false
 		}
 
@@ -335,8 +347,10 @@ func (as *audioStream) Cached() bool {
 
 	if info.Size() == 0 {
 		if err := os.Remove(as.dstFilePath); err != nil {
-			log.Err(err).
-				Msg("failed to remove empty file")
+			slog.Error(
+				"failed to remove empty file",
+				"error", err,
+			)
 		}
 		return false
 	}
@@ -352,16 +366,18 @@ func shellEscape(s string) string {
 func (as *audioStream) ReadCloser(ctx context.Context, wg *sync.WaitGroup) (io.ReadCloser, error) {
 
 	if as.Cached() {
-		log.Debug().
-			Str("url", as.srcVideoUrlStr).
-			Str("cached_file", as.dstFilePath).
-			Msg("playing from cache")
+		logging.Context(ctx).DebugContext(ctx,
+			"playing from cache",
+			"url", as.srcVideoUrlStr,
+			"cached_file", as.dstFilePath,
+		)
 		return os.Open(as.dstFilePath)
 	}
 
-	log.Debug().
-		Str("url", as.srcVideoUrlStr).
-		Msg("transcoding just in time and playing from transcode activity")
+	logging.Context(ctx).DebugContext(ctx,
+		"transcoding just in time and playing from transcode activity",
+		"url", as.srcVideoUrlStr,
+	)
 
 	var errResp struct {
 		sync.RWMutex
@@ -380,11 +396,13 @@ func (as *audioStream) ReadCloser(ctx context.Context, wg *sync.WaitGroup) (io.R
 			return
 		}
 
-		log.Err(err).
-			Str("src_url", as.srcVideoUrlStr).
-			Str("dst_path", as.dstFilePath).
-			Int64("size", as.size).
-			Msg("error in audio stream read-closer")
+		logging.Context(ctx).ErrorContext(ctx,
+			"error in audio stream read-closer",
+			"error", err,
+			"src_url", as.srcVideoUrlStr,
+			"dst_path", as.dstFilePath,
+			"size", as.size,
+		)
 
 		errResp.err = err
 	}
@@ -426,11 +444,16 @@ func (as *audioStream) ReadCloser(ctx context.Context, wg *sync.WaitGroup) (io.R
 					return
 				}
 
-				log.Debug().
-					Err(getErr()).
-					Str("src_url", as.srcVideoUrlStr).
-					Str("dst_path", as.dstFilePath).
-					Msg("could not cache audio stream")
+				logger := slog.Default()
+				if err := getErr(); err != nil {
+					logger = logger.With("error", err)
+				}
+
+				logger.Debug(
+					"could not cache audio stream",
+					"src_url", as.srcVideoUrlStr,
+					"dst_path", as.dstFilePath,
+				)
 
 				tmpFilePathCleanup()
 			}()
@@ -446,10 +469,11 @@ func (as *audioStream) ReadCloser(ctx context.Context, wg *sync.WaitGroup) (io.R
 
 		defer pw.Close()
 
-		log.Debug().
-			Int64("content-length", as.Format.ContentLength).
-			Str("video-url", as.srcVideoUrlStr).
-			Msg("getting stream")
+		slog.Debug(
+			"getting stream",
+			"content-length", as.Format.ContentLength,
+			"video-url", as.srcVideoUrlStr,
+		)
 
 		f, s, err := as.getStream(ctx, as.Video, as.Format)
 		if err != nil {
@@ -512,12 +536,14 @@ func (as *audioStream) ReadCloser(ctx context.Context, wg *sync.WaitGroup) (io.R
 		if cr.bytesRead != as.size {
 			err := errors.New("unexpected end of stream during transcode+reader")
 
-			log.Err(err).
-				Str("src_url", as.srcVideoUrlStr).
-				Str("dst_path", as.dstFilePath).
-				Int64("bytes_read", cr.bytesRead).
-				Int64("size", as.size).
-				Msg("failed to download all bytes from source stream for transcode+reader")
+			slog.Error(
+				"failed to download all bytes from source stream for transcode+reader",
+				"error", err,
+				"src_url", as.srcVideoUrlStr,
+				"dst_path", as.dstFilePath,
+				"bytes_read", cr.bytesRead,
+				"size", as.size,
+			)
 
 			setErr(err)
 			return
@@ -544,10 +570,12 @@ func (as *audioStream) ReadCloser(ctx context.Context, wg *sync.WaitGroup) (io.R
 				}
 
 				if err := os.Rename(tmpFilePath, as.dstFilePath); err != nil {
-					log.Err(err).
-						Str("src", tmpFilePath).
-						Str("dst", as.dstFilePath).
-						Msg("failed to rename file")
+					slog.Error(
+						"failed to rename file",
+						"error", err,
+						"src", tmpFilePath,
+						"dst", as.dstFilePath,
+					)
 
 					return i, err
 				}
@@ -555,10 +583,11 @@ func (as *audioStream) ReadCloser(ctx context.Context, wg *sync.WaitGroup) (io.R
 				// tmp file is now gone, don't try to remove it
 				tmpFilePathCleanup = nil
 
-				log.Debug().
-					Str("src_url", as.srcVideoUrlStr).
-					Str("dst_path", as.dstFilePath).
-					Msg("cached audio stream")
+				slog.Debug(
+					"cached audio stream",
+					"src_url", as.srcVideoUrlStr,
+					"dst_path", as.dstFilePath,
+				)
 
 				return i, nil
 			}
@@ -580,9 +609,10 @@ func (as *audioStream) ReadCloser(ctx context.Context, wg *sync.WaitGroup) (io.R
 // and it cannot be mixed with the async ReadCloser func.
 func (as *audioStream) DownloadAndTranscode(ctx context.Context) error {
 
-	log.Debug().
-		Str("url", as.srcVideoUrlStr).
-		Msg("downloading and transcoding to cache")
+	slog.Debug(
+		"downloading and transcoding to cache",
+		"url", as.srcVideoUrlStr,
+	)
 
 	cacheDir := path.Dir(as.dstFilePath)
 
@@ -610,10 +640,11 @@ func (as *audioStream) DownloadAndTranscode(ctx context.Context) error {
 		}
 	}()
 
-	log.Debug().
-		Int64("content-length", as.Format.ContentLength).
-		Str("video-url", as.srcVideoUrlStr).
-		Msg("getting stream")
+	slog.Debug(
+		"getting stream",
+		"content-length", as.Format.ContentLength,
+		"video-url", as.srcVideoUrlStr,
+	)
 
 	f, s, err := as.getStream(ctx, as.Video, as.Format)
 	if err != nil {
@@ -666,21 +697,24 @@ func (as *audioStream) DownloadAndTranscode(ctx context.Context) error {
 	if cr.bytesRead != as.size {
 		err := errors.New("unexpected end of stream during DownloadAndTranscode")
 
-		log.Err(err).
-			Str("src_url", as.srcVideoUrlStr).
-			Str("dst_path", as.dstFilePath).
-			Int64("bytes_read", cr.bytesRead).
-			Int64("size", as.size).
-			Msg("failed to download all bytes from source stream for transcode+cache")
+		slog.Error(
+			"failed to download all bytes from source stream for transcode+cache",
+			"error", err,
+			"src_url", as.srcVideoUrlStr,
+			"dst_path", as.dstFilePath,
+			"bytes_read", cr.bytesRead,
+			"size", as.size,
+		)
 
 		return err
 	}
 
 	if err := os.Rename(tmpFilePath, as.dstFilePath); err != nil {
-		log.Err(err).
-			Str("src", tmpFilePath).
-			Str("dst", as.dstFilePath).
-			Msg("failed to rename file")
+		slog.Error(
+			"failed to rename file",
+			"src", tmpFilePath,
+			"dst", as.dstFilePath,
+		)
 
 		return err
 	}
@@ -764,9 +798,11 @@ func handlePlayRequest(ctx context.Context, s *discordgo.Session, m *discordgo.M
 
 			defer closePlayPack()
 
-			log.Ctx(ctx).Error().
-				Err(errors.New("panicking")).
-				Msg("this should never happen: open a ticket")
+			logging.Context(ctx).ErrorContext(ctx,
+				"this should never happen",
+				"error", errors.New("panicking"),
+				"recommendation", "open a ticket",
+			)
 		}
 	}()
 
@@ -792,10 +828,10 @@ func processPlaylist(ctx context.Context, s *discordgo.Session, m *discordgo.Mes
 	{
 		v, err := url.Parse(urlStr)
 		if err != nil || v == nil {
-			log.Ctx(ctx).Debug().
-				Err(err).
-				Str("url", urlStr).
-				Msg("failed to parse url argument")
+			logging.Context(ctx).DebugContext(ctx,
+				"failed to parse url argument",
+				"url", urlStr,
+			)
 			return result
 		}
 
@@ -807,9 +843,10 @@ func processPlaylist(ctx context.Context, s *discordgo.Session, m *discordgo.Mes
 	}
 
 	if u.Path != "/playlist" && u.Path != "/playlist/" {
-		log.Ctx(ctx).Debug().
-			Str("url", urlStr).
-			Msg("not a playlist url")
+		logging.Context(ctx).DebugContext(ctx,
+			"not a playlist url",
+			"url", urlStr,
+		)
 		return result
 	}
 
@@ -905,9 +942,11 @@ func processPlaylist(ctx context.Context, s *discordgo.Session, m *discordgo.Mes
 				}
 
 				if err := as.SelectDownloadURL(ctx); err != nil {
-					log.Ctx(ctx).Err(err).
-						Str("track", as.srcVideoUrlStr).
-						Msg("failed to select download url")
+					logging.Context(ctx).ErrorContext(ctx,
+						"failed to select download url",
+						"error", err,
+						"track", as.srcVideoUrlStr,
+					)
 
 					p.BroadcastTextMessage("Failed to queue " + as.srcVideoUrlStr)
 
