@@ -71,14 +71,15 @@ func main() {
 		ctx = newCtx
 	}
 
-	logLevelStr := os.Getenv("LOG_LEVEL")
-	if logLevelStr != "" {
-		if err := logging.SetDefaultLevel(logLevelStr); err != nil {
-			panicLog(
-				"invalid log level",
-				"LOG_LEVEL", logLevelStr,
-			)
-		}
+	logLevelStr := slog.LevelInfo.String()
+	if s := os.Getenv("LOG_LEVEL"); s != "" {
+		logLevelStr = s
+	}
+	if err := logging.SetDefaultLevel(logLevelStr); err != nil {
+		panicLog(
+			"invalid log level",
+			"level", logLevelStr,
+		)
 	}
 
 	service.Version = Version

@@ -91,6 +91,7 @@ RUN mkdir -p "$MAGE_HOME"  \
     && mage -version
 
 # install runtime required packages
+# - ffmpeg - https://johnvansickle.com/ffmpeg/
 RUN mkdir -p /tmp/ffmpeg \
     && curl -fsSL "https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-$(bash -c 'x="$(uname -m)" && if [[ "$x" = "x86_64" ]]; then printf "amd64" ; elif [[ "$x" == "aarch64" ]]; then printf "arm64" ; else printf "%s" "$x" ; fi')-static.tar.xz" -o /tmp/ffmpeg/ffmpeg.tar.xz \
     && (cd /tmp/ffmpeg && tar -xf ffmpeg.tar.xz && mv ffmpeg-*-static/ffmpeg ffmpeg) \

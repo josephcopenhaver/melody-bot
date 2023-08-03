@@ -358,10 +358,6 @@ func (as *audioStream) Cached() bool {
 	return true
 }
 
-func shellEscape(s string) string {
-	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
-}
-
 //nolint:gocyclo
 func (as *audioStream) ReadCloser(ctx context.Context, wg *sync.WaitGroup) (io.ReadCloser, error) {
 
@@ -430,8 +426,17 @@ func (as *audioStream) ReadCloser(ctx context.Context, wg *sync.WaitGroup) (io.R
 	ignoredErr := tmpF.Close()
 	_ = ignoredErr
 
+	var teeDst io.WriteCloser
+	var teeOK bool
+	var fileCreateTried bool
+
 	tmpFilePathCleanup := func() {
-		os.Remove(tmpFilePath)
+		defer os.Remove(tmpFilePath)
+
+		if f := teeDst; f != nil {
+			teeDst = nil
+			f.Close()
+		}
 	}
 
 	pr, pw := io.Pipe()
@@ -522,7 +527,7 @@ func (as *audioStream) ReadCloser(ctx context.Context, wg *sync.WaitGroup) (io.R
 			return
 		}
 
-		cmd := exec.CommandContext(ctx, "bash", "-c", "set -eo pipefail && ffmpeg -f mp4 -y -loglevel quiet -i pipe: -ar "+strconv.Itoa(service.SampleRate)+" -ac 1 -vn -f s16le pipe:1 | tee "+shellEscape(tmpFilePath))
+		cmd := exec.CommandContext(ctx, "ffmpeg", "-f", "mp4", "-y", "-loglevel", "quiet", "-i", "pipe:", "-ar", strconv.Itoa(service.SampleRate), "-ac", "1", "-vn", "-f", "s16le", "pipe:1")
 		cmd.Stdin = cr
 		bw := bufio.NewWriter(pw)
 		cmd.Stdout = bw
@@ -557,6 +562,21 @@ func (as *audioStream) ReadCloser(ctx context.Context, wg *sync.WaitGroup) (io.R
 			return 0, err
 		}
 
+		if teeDst == nil && !fileCreateTried {
+			fileCreateTried = true
+
+			if f, err := os.Create(tmpFilePath); err != nil {
+				slog.Error(
+					"failed to open file for writing",
+					"error", err,
+					"file", tmpFilePath,
+				)
+			} else {
+				teeDst = f
+				teeOK = true
+			}
+		}
+
 		i, err := pr.Read(b)
 		if err != nil {
 			if errors.Is(err, io.EOF) {
@@ -569,25 +589,51 @@ func (as *audioStream) ReadCloser(ctx context.Context, wg *sync.WaitGroup) (io.R
 					return 0, err
 				}
 
-				if err := os.Rename(tmpFilePath, as.dstFilePath); err != nil {
-					slog.Error(
-						"failed to rename file",
-						"error", err,
-						"src", tmpFilePath,
-						"dst", as.dstFilePath,
-					)
+				if teeOK {
+					if i > 0 {
+						if _, err := teeDst.Write(b[:i]); err != nil {
+							teeOK = false
+							slog.Error(
+								"failed to write to tee tmp file near end of transcode",
+								"error", err,
+							)
+						}
+					}
 
-					return i, err
+					if teeOK {
+						f := teeDst
+						teeDst = nil // don't let defer try to close it again
+						if err := f.Close(); err != nil {
+							teeOK = false
+							slog.Error(
+								"failed to close tee tmp file near end of transcode",
+								"error", err,
+							)
+						}
+					}
 				}
 
-				// tmp file is now gone, don't try to remove it
-				tmpFilePathCleanup = nil
+				if teeOK && teeDst == nil {
+					if err := os.Rename(tmpFilePath, as.dstFilePath); err != nil {
+						slog.Error(
+							"failed to rename file",
+							"error", err,
+							"src", tmpFilePath,
+							"dst", as.dstFilePath,
+						)
 
-				slog.Debug(
-					"cached audio stream",
-					"src_url", as.srcVideoUrlStr,
-					"dst_path", as.dstFilePath,
-				)
+						return i, err
+					}
+
+					// tmp file is now gone, don't try to remove it
+					tmpFilePathCleanup = nil
+
+					slog.Debug(
+						"cached audio stream",
+						"src_url", as.srcVideoUrlStr,
+						"dst_path", as.dstFilePath,
+					)
+				}
 
 				return i, nil
 			}
@@ -595,6 +641,16 @@ func (as *audioStream) ReadCloser(ctx context.Context, wg *sync.WaitGroup) (io.R
 			cancel()
 
 			return i, err
+		}
+
+		if teeOK && i > 0 {
+			if _, err := teeDst.Write(b[:i]); err != nil {
+				teeOK = false
+				slog.Error(
+					"append to write to tee tmp file",
+					"error", err,
+				)
+			}
 		}
 
 		return i, nil
@@ -687,7 +743,7 @@ func (as *audioStream) DownloadAndTranscode(ctx context.Context) error {
 		return fmt.Errorf("unexpected stream size detected on open, expected %d, got %d", as.size, s)
 	}
 
-	cmd := exec.CommandContext(ctx, "bash", "-c", "set -eo pipefail && ffmpeg -f mp4 -y -loglevel quiet -i pipe: -ar "+strconv.Itoa(service.SampleRate)+" -ac 1 -vn -f s16le "+shellEscape(tmpFilePath))
+	cmd := exec.CommandContext(ctx, "ffmpeg", "-f", "mp4", "-y", "-loglevel", "quiet", "-i", "pipe:", "-ar", strconv.Itoa(service.SampleRate), "-ac", "1", "-vn", "-f", "s16le", tmpFilePath)
 	cmd.Stdin = cr
 
 	if err := cmd.Run(); err != nil {
@@ -816,7 +872,7 @@ func handlePlayRequest(ctx context.Context, s *discordgo.Session, m *discordgo.M
 	return playAfterTranscode(ctx, s, m, p, play, urlStr)
 }
 
-var ErrPanicInPlaylistLoader = errors.New("Panic in playlist loader")
+var ErrPanicInPlaylistLoader = errors.New("panic in playlist loader")
 
 //nolint:gocyclo
 func processPlaylist(ctx context.Context, s *discordgo.Session, m *discordgo.MessageCreate, p *service.Player, play func(context.Context, *audioStream), closePlayPack func(), urlStr string) bool {
