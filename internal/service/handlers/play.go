@@ -589,31 +589,34 @@ func (as *audioStream) ReadCloser(ctx context.Context, wg *sync.WaitGroup) (io.R
 					return 0, err
 				}
 
-				if teeOK {
+				// handle tee file state
+				if renameErr := func() error {
+					if !teeOK {
+						return nil
+					}
+
 					if i > 0 {
 						if _, err := teeDst.Write(b[:i]); err != nil {
-							teeOK = false
 							slog.Error(
 								"failed to write to tee tmp file near end of transcode",
 								"error", err,
 							)
-						}
-					}
-
-					if teeOK {
-						f := teeDst
-						teeDst = nil // don't let defer try to close it again
-						if err := f.Close(); err != nil {
 							teeOK = false
-							slog.Error(
-								"failed to close tee tmp file near end of transcode",
-								"error", err,
-							)
+							return nil
 						}
 					}
-				}
 
-				if teeOK && teeDst == nil {
+					f := teeDst
+					teeDst = nil  // don't let defer try to close it again
+					teeOK = false // don't attempt to write to tee again
+					if err := f.Close(); err != nil {
+						slog.Error(
+							"failed to close tee tmp file near end of transcode",
+							"error", err,
+						)
+						return nil
+					}
+
 					if err := os.Rename(tmpFilePath, as.dstFilePath); err != nil {
 						slog.Error(
 							"failed to rename file",
@@ -621,8 +624,7 @@ func (as *audioStream) ReadCloser(ctx context.Context, wg *sync.WaitGroup) (io.R
 							"src", tmpFilePath,
 							"dst", as.dstFilePath,
 						)
-
-						return i, err
+						return err
 					}
 
 					// tmp file is now gone, don't try to remove it
@@ -633,9 +635,11 @@ func (as *audioStream) ReadCloser(ctx context.Context, wg *sync.WaitGroup) (io.R
 						"src_url", as.srcVideoUrlStr,
 						"dst_path", as.dstFilePath,
 					)
-				}
 
-				return i, nil
+					return nil
+				}(); renameErr != nil {
+					return i, renameErr
+				}
 			}
 
 			cancel()
@@ -647,7 +651,7 @@ func (as *audioStream) ReadCloser(ctx context.Context, wg *sync.WaitGroup) (io.R
 			if _, err := teeDst.Write(b[:i]); err != nil {
 				teeOK = false
 				slog.Error(
-					"append to write to tee tmp file",
+					"failed to append to tee tmp file",
 					"error", err,
 				)
 			}

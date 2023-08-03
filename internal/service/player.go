@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"runtime/debug"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -902,6 +903,7 @@ func (p *Player) playerGoroutine(ctx context.Context, wg *sync.WaitGroup) {
 						"state", prevState.String(),
 						"guild_id", p.discordGuildId,
 						"error", r,
+						"stack_trace", string(debug.Stack()),
 					)
 				}
 			}()

@@ -24,6 +24,7 @@ var logger *slog.Logger
 //nolint:gochecknoinits
 func init() {
 	logger = newLogger(slog.LevelInfo)
+	slog.SetDefault(logger)
 }
 
 // SetDefaultLevel should only be called once, and before goroutines are spawned
