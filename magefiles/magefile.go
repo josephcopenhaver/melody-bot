@@ -177,6 +177,13 @@ func down(ctx context.Context, removeVolumes bool) error {
 	return nil
 }
 
+func shellComposeFileEnv(cwd string) string {
+	return "COMPOSE_FILE=" + strings.Join([]string{
+		filepath.Join(cwd, "docker/networks/docker-compose.yml"),
+		filepath.Join(cwd, "docker/shell/docker-compose.yml"),
+	}, string(os.PathListSeparator))
+}
+
 //
 // END helpers tightly coupled to this project
 //
@@ -392,11 +399,6 @@ func Shell(ctx context.Context) error {
 
 	cwd := os.Getenv("PWD")
 
-	composeFile := "COMPOSE_FILE=" + strings.Join([]string{
-		filepath.Join(cwd, "docker/networks/docker-compose.yml"),
-		filepath.Join(cwd, "docker/shell/docker-compose.yml"),
-	}, string(os.PathListSeparator))
-
 	// init shell files
 	{
 		if fname := ".devcontainer/cache/bash_history"; !fileObjExists(fname) {
@@ -433,6 +435,7 @@ func Shell(ctx context.Context) error {
 		}
 	}
 
+	composeFile := shellComposeFileEnv(cwd)
 	baseCmd := NewCmd("docker-compose").AppendEnv(composeFile)
 
 	if err := baseCmd.Clone().ReplaceArgs("build", "shell").Run(ctx); err != nil {
@@ -497,4 +500,49 @@ func Logs(ctx context.Context) error {
 	}
 
 	return nil
+}
+
+func Test(ctx context.Context) error {
+
+	const testCmd = `go test ./... && go test -race ./...`
+
+	if os.Getenv("IN_DOCKER_CONTAINER") != "" {
+		return NewCmd(CmdB().Fields("bash -c").Arg(testCmd).New()...).Run(ctx)
+	}
+
+	mg.Deps(vars)
+
+	cwd := os.Getenv("PWD")
+
+	composeFile := shellComposeFileEnv(cwd)
+	baseCmd := NewCmd("docker-compose").AppendEnv(composeFile)
+
+	// setting stdin is required to avoid "the input device is not a TTY" errors
+	//
+	// this command ensures that the networks are created, nothing more
+	if err := baseCmd.Clone().ReplaceArgs(CmdB().Fields("run --rm --entrypoint bash shell -c").Arg("exit 0").New()...).Stdin(os.Stdin).Run(ctx); err != nil {
+		return err
+	}
+
+	if err := os.Setenv("ENV", "test"); err != nil {
+		return err
+	}
+
+	// TODO: specify test env file and network
+
+	gitsha := os.Getenv("GIT_SHA")
+	if gitsha == "" {
+		gitsha = "latest"
+	}
+	return NewCmd(CmdB().
+		Fields("docker run --rm").
+		Fields("-e IN_DOCKER_CONTAINER=true").
+		Fields("-w /workspace").
+		Args("-v", cwd+":/workspace").
+		Fields("--entrypoint bash").
+		Arg("josephcopenhaver/melody-bot--shell:" + gitsha).
+		Arg("-c").
+		Arg("mage test").
+		New()...).
+		AppendEnv(composeFile).Run(ctx)
 }

@@ -3,10 +3,7 @@ FROM josephcopenhaver/melody-bot--shell:$SHELL_VERSION
 
 COPY ./ ./
 
-RUN cd "$MAGE_HOME" \
-    && go run bootstrap.go \
-    && cd - \
-    && CI=true mage build
+RUN CI=true mage build
 
 FROM gcr.io/distroless/static-debian11
 
