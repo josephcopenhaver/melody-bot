@@ -10,6 +10,10 @@ import (
 	"golang.org/x/exp/slog"
 )
 
+// TODO: if an error implements fmt.Formatter then treat it's output as the stack trace
+//
+// examples of this can be found in https://github.com/pkg/errors and more
+
 func newLogger(level slog.Level) *slog.Logger {
 	out := io.Writer(os.Stderr)
 
