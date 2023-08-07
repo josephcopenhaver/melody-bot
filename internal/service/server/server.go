@@ -8,7 +8,7 @@ import (
 	"github.com/bwmarrin/discordgo"
 	"github.com/josephcopenhaver/melody-bot/internal/service"
 	"github.com/josephcopenhaver/melody-bot/internal/service/handlers"
-	"github.com/rs/zerolog/log"
+	"golang.org/x/exp/slog"
 )
 
 type EventHandlers struct {
@@ -16,7 +16,6 @@ type EventHandlers struct {
 }
 
 type Server struct {
-	ctx            context.Context
 	wg             sync.WaitGroup
 	DiscordSession *discordgo.Session
 	EventHandlers  EventHandlers
@@ -38,13 +37,12 @@ func (s *Server) ListenAndServe(ctx context.Context) (err_result error) {
 		return err
 	}
 
-	s.ctx = ctx
-
 	sd := handlers.SerialDownloader()
 	sd.Start(ctx)
 	defer func() {
-		log.Warn().
-			Msg("waiting for cache downloader to terminate")
+		slog.WarnContext(ctx,
+			"waiting for cache downloader to terminate",
+		)
 
 		sd.Wait()
 	}()
@@ -54,21 +52,24 @@ func (s *Server) ListenAndServe(ctx context.Context) (err_result error) {
 		return err
 	}
 	defer func() {
-		log.Warn().
-			Msg("waiting for discord session to close")
+		slog.WarnContext(ctx,
+			"waiting for discord session to close",
+		)
 
 		err_result = errors.Join(err_result, s.DiscordSession.Close())
 	}()
 
 	defer func() {
-		log.Warn().
-			Msg("waiting for all players to terminate")
+		slog.WarnContext(ctx,
+			"waiting for all players to terminate",
+		)
 
 		s.wg.Wait()
 	}()
 
-	log.Info().
-		Msg("listening")
+	slog.InfoContext(ctx,
+		"listening",
+	)
 
 	<-ctx.Done()
 

@@ -18,7 +18,7 @@ func Repeat() HandleMessageCreate {
 			[]string{"repeat"},
 			func(_ context.Context, s *discordgo.Session, m *discordgo.MessageCreate, p *service.Player) error {
 
-				repeatMode := p.CycleRepeatMode(m)
+				repeatMode := p.CycleRepeatMode()
 
 				_, err := s.ChannelMessageSend(m.ChannelID, "repeat mode is now: "+repeatMode)
 				return err

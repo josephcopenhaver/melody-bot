@@ -2,29 +2,105 @@ package service
 
 import (
 	"context"
+	"errors"
 	"sync"
 
 	"github.com/bwmarrin/discordgo"
 )
 
+// SyncMap is a generic wrapper around sync's Map type
+type SyncMap[K comparable, V any] struct {
+	m sync.Map
+}
+
+func (m *SyncMap[K, V]) Delete(key K) {
+	m.m.Delete(key)
+}
+
+func (m *SyncMap[K, V]) Load(key K) (V, bool) {
+	var result V
+
+	v, ok := m.m.Load(key)
+	if ok {
+		var assertOK bool
+		result, assertOK = v.(V)
+		if !assertOK {
+			panic(errors.New("unreachable"))
+		}
+	}
+
+	return result, ok
+}
+
+func (m *SyncMap[K, V]) LoadAndDelete(key K) (V, bool) {
+	var result V
+
+	v, loaded := m.m.LoadAndDelete(key)
+	if loaded {
+		var assertOK bool
+		result, assertOK = v.(V)
+		if !assertOK {
+			panic(errors.New("unreachable"))
+		}
+	}
+
+	return result, loaded
+}
+
+func (m *SyncMap[K, V]) LoadOrStore(key K, value V) (V, bool) {
+	var result V
+
+	v, loaded := m.m.LoadOrStore(key, value)
+	if loaded {
+		var assertOK bool
+		result, assertOK = v.(V)
+		if !assertOK {
+			panic(errors.New("unreachable"))
+		}
+	} else {
+		result = value
+	}
+
+	return result, loaded
+}
+
+func (m *SyncMap[K, V]) Range(f func(key K, value V) bool) {
+	m.m.Range(func(key, value any) bool {
+
+		k, ok := key.(K)
+		if !ok {
+			panic(errors.New("unreachable"))
+		}
+
+		v, ok := value.(V)
+		if !ok {
+			panic(errors.New("unreachable"))
+		}
+
+		return f(k, v)
+	})
+}
+
+func (m *SyncMap[K, V]) Store(key K, value V) {
+	m.m.Store(key, value)
+}
+
 type Brain struct {
-	mutex    sync.Mutex
-	guildMap sync.Map
+	mutex            sync.Mutex
+	playersByGuildID SyncMap[string, *Player]
 }
 
 func NewBrain() *Brain {
 	return &Brain{
-		guildMap: sync.Map{},
+		playersByGuildID: SyncMap[string, *Player]{},
 	}
 }
 
 func (b *Brain) Player(ctx context.Context, wg *sync.WaitGroup, s *discordgo.Session, guildId string) *Player {
 
-	var result *Player
-
-	resp, ok := b.guildMap.Load(guildId)
+	result, ok := b.playersByGuildID.Load(guildId)
 	if ok {
-		return resp.(*Player)
+		return result
 	}
 
 	// locking to prevent goroutine leaks
@@ -34,14 +110,14 @@ func (b *Brain) Player(ctx context.Context, wg *sync.WaitGroup, s *discordgo.Ses
 
 	// reread in case it was just created
 	// by another thread
-	resp, ok = b.guildMap.Load(guildId)
+	result, ok = b.playersByGuildID.Load(guildId)
 	if ok {
-		return resp.(*Player)
+		return result
 	}
 
 	result = NewPlayer(ctx, wg, s, guildId)
 
-	b.guildMap.Store(guildId, result)
+	b.playersByGuildID.Store(guildId, result)
 
 	return result
 }
@@ -51,14 +127,12 @@ func (b *Brain) StopAllPlayers(m *discordgo.MessageCreate) error {
 	b.mutex.Lock()
 	defer b.mutex.Unlock()
 
-	b.guildMap.Range(func(key, value any) bool {
-		guildId, ok := key.(string)
-		if guildId == "" || !ok {
+	b.playersByGuildID.Range(func(guildID string, p *Player) bool {
+		if guildID == "" {
 			return true
 		}
 
-		p, ok := value.(*Player)
-		if p == nil || !ok {
+		if p == nil {
 			return true
 		}
 
@@ -73,8 +147,8 @@ func (b *Brain) StopAllPlayers(m *discordgo.MessageCreate) error {
 	return nil
 }
 
-func (b *Brain) PlayerExists(s *discordgo.Session, guildId string) bool {
+func (b *Brain) PlayerExists(_ *discordgo.Session, guildId string) bool {
 
-	_, ok := b.guildMap.Load(guildId)
+	_, ok := b.playersByGuildID.Load(guildId)
 	return ok
 }

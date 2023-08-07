@@ -1,4 +1,29 @@
-./.docker-volumes
-./.devcontainer/cache
-./.media-cache
-./.media-meta-cache
+# Ignore everything
+*
+**/*
+
+#
+# allow-listed paths
+#
+
+# vcs support
+!/.git
+!/.gitignore
+
+# build support
+!/magefiles
+
+# src code
+!/cmd
+!/internal
+
+# dependency management
+!/go.mod
+!/go.sum
+
+# version management
+!/version.txt
+
+# dependency cache
+!/vendor
+!/vendor-ext

@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"os"
 	"os/signal"
 	"syscall"
@@ -10,14 +12,14 @@ import (
 	"github.com/josephcopenhaver/melody-bot/internal/service"
 	"github.com/josephcopenhaver/melody-bot/internal/service/config"
 	"github.com/josephcopenhaver/melody-bot/internal/service/server"
-	"github.com/rs/zerolog/log"
+	"golang.org/x/exp/slog"
 )
 
 // rootContext returns a context that is canceled when the
 // system process receives an interrupt, sigint, or sigterm
 //
 // Also returns a function that can be used to cancel the context.
-func rootContext() (context.Context, func()) {
+func rootContext() (context.Context, func()) { //nolint:gocritic
 
 	ctx, cancel := context.WithCancel(context.Background())
 
@@ -28,19 +30,20 @@ func rootContext() (context.Context, func()) {
 	go func() {
 		defer cancel()
 
-		done := ctx.Done()
+		ctxDone := ctx.Done()
 
-		requester := "unknown"
+		var requester string
 		select {
 		case <-procDone:
-			requester = "user"
-		case <-done:
-			requester = "process"
+			requester = "external"
+		case <-ctxDone:
+			requester = "internal"
 		}
 
-		log.Warn().
-			Str("requester", requester).
-			Msg("shutdown requested")
+		slog.Warn(
+			"shutdown requested",
+			"requester", requester,
+		)
 	}()
 
 	return ctx, cancel
@@ -48,6 +51,17 @@ func rootContext() (context.Context, func()) {
 
 var GitSHA string
 var Version string
+
+func panicLog(msg string, vargs ...any) {
+	slog.Error(msg, vargs...)
+	panic(errors.New(msg))
+}
+
+//nolint:unparam
+func panicErrLog(err error, msg string, vargs ...any) {
+	slog.With("error", err).Error(msg, vargs...)
+	panic(fmt.Errorf("%s: %w", msg, err))
+}
 
 func main() {
 	var ctx context.Context
@@ -58,51 +72,44 @@ func main() {
 		ctx = newCtx
 	}
 
-	logLevelStr := os.Getenv("LOG_LEVEL")
-	if logLevelStr != "" {
-		if err := logging.SetGlobalLevel(logLevelStr); err != nil {
-			log.Panic().
-				Str("LOG_LEVEL", logLevelStr).
-				Msg("invalid log level")
-		}
+	logLevelStr := slog.LevelInfo.String()
+	if s := os.Getenv("LOG_LEVEL"); s != "" {
+		logLevelStr = s
+	}
+	if err := logging.SetDefaultLevel(logLevelStr); err != nil {
+		panicLog(
+			"invalid log level",
+			"level", logLevelStr,
+		)
 	}
 
 	service.Version = Version
 	service.Commit = GitSHA
-	log.Info().
-		Str("Version", service.Version).
-		Str("Commit", service.Commit).
-		Msg("melody-bot initializing")
+	slog.InfoContext(ctx,
+		"melody-bot initializing",
+		"Version", service.Version,
+		"Commit", service.Commit,
+	)
 
 	conf, err := config.New()
 	if err != nil {
-		log.Panic().
-			Err(err).
-			Msg("failed to read configuration")
+		panicErrLog(err, "failed to read configuration")
 	}
 
 	server := server.New()
 	if err := server.SetConfig(conf); err != nil {
-		log.Panic().
-			Err(err).
-			Msg("failed to load configuration")
+		panicErrLog(err, "failed to load configuration")
 	}
 
-	if err := server.Handlers(); err != nil {
-		log.Panic().
-			Err(err).
-			Msg("failed to register handlers")
+	if err := server.Handlers(ctx); err != nil {
+		panicErrLog(err, "failed to register handlers")
 	}
 
-	log.Info().
-		Msg("starting listener")
+	slog.InfoContext(ctx, "starting listener")
 
 	if err := server.ListenAndServe(ctx); err != nil {
-		log.Panic().
-			Err(err).
-			Msg("server stopped unexpectedly")
+		panicErrLog(err, "server stopped unexpectedly")
 	}
 
-	log.Warn().
-		Msg("server shutdown complete")
+	slog.WarnContext(ctx, "server shutdown complete")
 }

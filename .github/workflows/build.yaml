@@ -1,0 +1,47 @@
+name: build
+on:
+  push:
+  schedule:
+    - cron: "12 7 * * 6" # INIT_CRON_EXPRESSION: echo "$(((RANDOM%60))) $(((RANDOM%24)))"' * * '"$( if [[ $(((RANDOM%2))) -eq 0 ]]; then echo 0; else echo 6; fi )"
+
+env:
+  MAGE_VERSION: v1.14.0
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        go: [ '1.20' ]
+    name: go v${{ matrix.go }}
+    steps:
+      - uses: actions/checkout@v3
+      - name: setup go
+        uses: actions/setup-go@v3
+        with:
+          go-version: ${{ matrix.go }}
+      - name: verify golang files are consistently formatted
+        run: |
+          [ `git status --porcelain=1 | wc -l` -eq 0 ] || ( >&2 echo "failed to establish that files were unchanged before running format check" ; exit 1)
+          find . -type f -name '*.go' ! -path './vendor/*' -exec gofmt -l -s -w {} +
+          [ `git status --porcelain=1 | wc -l` -eq 0 ] || ( >&2 echo "files exist that need to be formatted by gofmt" ; exit 1)
+      - name: install go dependencies
+        uses: magefile/mage-action@v2
+        with:
+          version: ${{ env.MAGE_VERSION }}
+          args: installdeps
+      - name: build all images
+        uses: magefile/mage-action@v2
+        with:
+          version: ${{ env.MAGE_VERSION }}
+          args: buildallimages
+      - name: lint
+        uses: magefile/mage-action@v2
+        with:
+          version: ${{ env.MAGE_VERSION }}
+          args: lint
+      - name: test
+        uses: magefile/mage-action@v2
+        with:
+          version: ${{ env.MAGE_VERSION }}
+          args: test

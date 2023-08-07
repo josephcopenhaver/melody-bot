@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/ioutil"
 	"net/http"
 	"net/url"
 	"os"
@@ -20,12 +19,13 @@ import (
 	"sync"
 	"time"
 
-	"github.com/rs/zerolog/log"
+	"golang.org/x/exp/slog"
 
 	"github.com/bwmarrin/discordgo"
 	"github.com/kkdai/youtube/v2"
 
 	"github.com/josephcopenhaver/melody-bot/internal/cache"
+	"github.com/josephcopenhaver/melody-bot/internal/logging"
 	"github.com/josephcopenhaver/melody-bot/internal/service"
 	"github.com/josephcopenhaver/melody-bot/internal/service/server/reactions"
 )
@@ -34,6 +34,10 @@ const (
 	MediaCacheDir          = ".media-cache/v1"
 	MediaMetadataCacheDir  = ".media-meta-cache/v1"
 	MediaMetadataCacheSize = 1024 * 1024
+)
+
+var (
+	ErrVoiceChannelNotFound = errors.New("could not find voice channel")
 )
 
 type MediaMetaCacheEntry struct {
@@ -76,6 +80,7 @@ var vidMetadataCacheOptions = []cache.DiskCacheOption[string, MediaMetaCacheEntr
 
 var vidMetadataCache *cache.DiskCache[string, MediaMetaCacheEntry]
 
+//nolint:gochecknoinits
 func init() {
 	if v, err := cache.NewDiskCache(MediaMetadataCacheDir, MediaMetadataCacheSize, vidMetadataCacheOptions...); err != nil {
 		panic(err)
@@ -148,8 +153,8 @@ func newCountingReader(r io.Reader) *countingReader {
 	}
 }
 
-func (r *countingReader) Read(p []byte) (n int, err error) {
-	n, err = r.reader.Read(p)
+func (r *countingReader) Read(p []byte) (int, error) {
+	n, err := r.reader.Read(p)
 	r.bytesRead += int64(n)
 	return n, err
 }
@@ -202,7 +207,10 @@ func (as *audioStream) SelectDownloadURLWithFallbackApiClient(ctx context.Contex
 
 		ytVid, err = as.ytApiClient.GetVideoContext(ctx, as.srcVideoUrlStr)
 		if err != nil {
-			log.Err(err).Msg("failed to get video context")
+			logging.Context(ctx).ErrorContext(ctx,
+				"failed to get video context",
+				"error", err,
+			)
 			return err
 		}
 
@@ -249,10 +257,11 @@ func (as *audioStream) SelectDownloadURLWithFallbackApiClient(ctx context.Contex
 					newReader.Close()
 				}
 				if newSize == 0 {
-					log.Error().
-						Str("video_url", as.srcVideoUrlStr).
-						Str("format_url", f.URL).
-						Msg("stream size consistently returned zero bytes which should be impossible")
+					logging.Context(ctx).ErrorContext(ctx,
+						"stream size consistently returned zero bytes which should be impossible",
+						"video_url", as.srcVideoUrlStr,
+						"format_url", f.URL,
+					)
 					continue
 				}
 			}
@@ -266,7 +275,10 @@ func (as *audioStream) SelectDownloadURLWithFallbackApiClient(ctx context.Contex
 		}
 
 		if as.Format == nil {
-			log.Error().Int("search_count", len(formats)).Msg("failed to find a usable video format")
+			logging.Context(ctx).ErrorContext(ctx,
+				"failed to find a usable video format",
+				"search_count", len(formats),
+			)
 			return fmt.Errorf("failed to find a usable video format, searched %d", len(formats))
 		}
 	}
@@ -286,25 +298,27 @@ func (as *audioStream) SelectDownloadURLWithFallbackApiClient(ctx context.Contex
 		}
 
 		if err := vidMetadataCache.Set(as.srcVideoUrlStr, cacheV); err != nil {
-			log.Error().
-				Err(err).
-				Str("key", as.srcVideoUrlStr).
-				Interface("VideoFormat", *as.Format).
-				Msg("failed to save a video metadata cache entry")
+			logging.Context(ctx).ErrorContext(ctx,
+				"failed to save a video metadata cache entry",
+				"error", err,
+				"key", as.srcVideoUrlStr,
+				"VideoFormat", *as.Format,
+			)
 		}
 	}
 
-	log.Debug().
-		Str("ID", as.ID).
-		Int("ItagNo", as.ItagNo).
-		Int("Bitrate", as.Bitrate).
-		Str("AudioQuality", as.AudioQuality).
-		Str("AudioSampleRate", as.AudioSampleRate).
-		Str("Quality", as.Quality).
-		Str("QualityLabel", as.QualityLabel).
-		Str("URL", as.URL).
-		Int("AudioChannels", as.AudioChannels).
-		Msg("found video format")
+	logging.Context(ctx).DebugContext(ctx,
+		"found video format",
+		"ID", as.ID,
+		"ItagNo", as.ItagNo,
+		"Bitrate", as.Bitrate,
+		"AudioQuality", as.AudioQuality,
+		"AudioSampleRate", as.AudioSampleRate,
+		"Quality", as.Quality,
+		"QualityLabel", as.QualityLabel,
+		"URL", as.URL,
+		"AudioChannels", as.AudioChannels,
+	)
 
 	return nil
 }
@@ -321,8 +335,10 @@ func (as *audioStream) Cached() bool {
 	info, err := os.Stat(as.dstFilePath)
 	if err != nil {
 		if !os.IsNotExist(err) {
-			log.Err(err).
-				Msg("failed to stat file system")
+			slog.Error(
+				"failed to stat file system",
+				"error", err,
+			)
 			return false
 		}
 
@@ -331,8 +347,10 @@ func (as *audioStream) Cached() bool {
 
 	if info.Size() == 0 {
 		if err := os.Remove(as.dstFilePath); err != nil {
-			log.Err(err).
-				Msg("failed to remove empty file")
+			slog.Error(
+				"failed to remove empty file",
+				"error", err,
+			)
 		}
 		return false
 	}
@@ -340,23 +358,22 @@ func (as *audioStream) Cached() bool {
 	return true
 }
 
-func shellEscape(s string) string {
-	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
-}
-
+//nolint:gocyclo
 func (as *audioStream) ReadCloser(ctx context.Context, wg *sync.WaitGroup) (io.ReadCloser, error) {
 
 	if as.Cached() {
-		log.Debug().
-			Str("url", as.srcVideoUrlStr).
-			Str("cached_file", as.dstFilePath).
-			Msg("playing from cache")
+		logging.Context(ctx).DebugContext(ctx,
+			"playing from cache",
+			"url", as.srcVideoUrlStr,
+			"cached_file", as.dstFilePath,
+		)
 		return os.Open(as.dstFilePath)
 	}
 
-	log.Debug().
-		Str("url", as.srcVideoUrlStr).
-		Msg("transcoding just in time and playing from transcode activity")
+	logging.Context(ctx).DebugContext(ctx,
+		"transcoding just in time and playing from transcode activity",
+		"url", as.srcVideoUrlStr,
+	)
 
 	var errResp struct {
 		sync.RWMutex
@@ -375,11 +392,13 @@ func (as *audioStream) ReadCloser(ctx context.Context, wg *sync.WaitGroup) (io.R
 			return
 		}
 
-		log.Err(err).
-			Str("src_url", as.srcVideoUrlStr).
-			Str("dst_path", as.dstFilePath).
-			Int64("size", as.size).
-			Msg("error in audio stream read-closer")
+		logging.Context(ctx).ErrorContext(ctx,
+			"error in audio stream read-closer",
+			"error", err,
+			"src_url", as.srcVideoUrlStr,
+			"dst_path", as.dstFilePath,
+			"size", as.size,
+		)
 
 		errResp.err = err
 	}
@@ -397,7 +416,7 @@ func (as *audioStream) ReadCloser(ctx context.Context, wg *sync.WaitGroup) (io.R
 		return nil, fmt.Errorf("failed to make cache directory: %s: %w", cacheDir, err)
 	}
 
-	tmpF, err := ioutil.TempFile(cacheDir, "melody-bot.*.audio.s16le.tmp")
+	tmpF, err := os.CreateTemp(cacheDir, "melody-bot.*.audio.s16le.tmp")
 	if err != nil {
 		return nil, err
 	}
@@ -407,8 +426,17 @@ func (as *audioStream) ReadCloser(ctx context.Context, wg *sync.WaitGroup) (io.R
 	ignoredErr := tmpF.Close()
 	_ = ignoredErr
 
+	var teeDst io.WriteCloser
+	var teeOK bool
+	var fileCreateTried bool
+
 	tmpFilePathCleanup := func() {
-		os.Remove(tmpFilePath)
+		defer os.Remove(tmpFilePath)
+
+		if f := teeDst; f != nil {
+			teeDst = nil
+			f.Close()
+		}
 	}
 
 	pr, pw := io.Pipe()
@@ -421,11 +449,16 @@ func (as *audioStream) ReadCloser(ctx context.Context, wg *sync.WaitGroup) (io.R
 					return
 				}
 
-				log.Debug().
-					Err(getErr()).
-					Str("src_url", as.srcVideoUrlStr).
-					Str("dst_path", as.dstFilePath).
-					Msg("could not cache audio stream")
+				logger := slog.Default()
+				if err := getErr(); err != nil {
+					logger = logger.With("error", err)
+				}
+
+				logger.Debug(
+					"could not cache audio stream",
+					"src_url", as.srcVideoUrlStr,
+					"dst_path", as.dstFilePath,
+				)
 
 				tmpFilePathCleanup()
 			}()
@@ -441,10 +474,11 @@ func (as *audioStream) ReadCloser(ctx context.Context, wg *sync.WaitGroup) (io.R
 
 		defer pw.Close()
 
-		log.Debug().
-			Int64("content-length", as.Format.ContentLength).
-			Str("video-url", as.srcVideoUrlStr).
-			Msg("getting stream")
+		slog.Debug(
+			"getting stream",
+			"content-length", as.Format.ContentLength,
+			"video-url", as.srcVideoUrlStr,
+		)
 
 		f, s, err := as.getStream(ctx, as.Video, as.Format)
 		if err != nil {
@@ -493,7 +527,7 @@ func (as *audioStream) ReadCloser(ctx context.Context, wg *sync.WaitGroup) (io.R
 			return
 		}
 
-		cmd := exec.CommandContext(ctx, "bash", "-c", "set -eo pipefail && ffmpeg -f mp4 -y -loglevel quiet -i pipe: -ar "+strconv.Itoa(service.SampleRate)+" -ac 1 -vn -f s16le pipe:1 | tee "+shellEscape(tmpFilePath))
+		cmd := exec.CommandContext(ctx, "ffmpeg", "-f", "mp4", "-y", "-loglevel", "quiet", "-i", "pipe:", "-ar", strconv.Itoa(service.SampleRate), "-ac", "1", "-vn", "-f", "s16le", "pipe:1")
 		cmd.Stdin = cr
 		bw := bufio.NewWriter(pw)
 		cmd.Stdout = bw
@@ -507,12 +541,14 @@ func (as *audioStream) ReadCloser(ctx context.Context, wg *sync.WaitGroup) (io.R
 		if cr.bytesRead != as.size {
 			err := errors.New("unexpected end of stream during transcode+reader")
 
-			log.Err(err).
-				Str("src_url", as.srcVideoUrlStr).
-				Str("dst_path", as.dstFilePath).
-				Int64("bytes_read", cr.bytesRead).
-				Int64("size", as.size).
-				Msg("failed to download all bytes from source stream for transcode+reader")
+			slog.Error(
+				"failed to download all bytes from source stream for transcode+reader",
+				"error", err,
+				"src_url", as.srcVideoUrlStr,
+				"dst_path", as.dstFilePath,
+				"bytes_read", cr.bytesRead,
+				"size", as.size,
+			)
 
 			setErr(err)
 			return
@@ -524,6 +560,21 @@ func (as *audioStream) ReadCloser(ctx context.Context, wg *sync.WaitGroup) (io.R
 	result.read = func(b []byte) (int, error) {
 		if err := getErr(); err != nil {
 			return 0, err
+		}
+
+		if teeDst == nil && !fileCreateTried {
+			fileCreateTried = true
+
+			if f, err := os.Create(tmpFilePath); err != nil {
+				slog.Error(
+					"failed to open file for writing",
+					"error", err,
+					"file", tmpFilePath,
+				)
+			} else {
+				teeDst = f
+				teeOK = true
+			}
 		}
 
 		i, err := pr.Read(b)
@@ -538,29 +589,72 @@ func (as *audioStream) ReadCloser(ctx context.Context, wg *sync.WaitGroup) (io.R
 					return 0, err
 				}
 
-				if err := os.Rename(tmpFilePath, as.dstFilePath); err != nil {
-					log.Err(err).
-						Str("src", tmpFilePath).
-						Str("dst", as.dstFilePath).
-						Msg("failed to rename file")
+				// handle tee file state
+				if renameErr := func() error {
+					if !teeOK {
+						return nil
+					}
 
-					return i, err
+					if i > 0 {
+						if _, err := teeDst.Write(b[:i]); err != nil {
+							slog.Error(
+								"failed to write to tee tmp file near end of transcode",
+								"error", err,
+							)
+							teeOK = false
+							return nil
+						}
+					}
+
+					f := teeDst
+					teeDst = nil  // don't let defer try to close it again
+					teeOK = false // don't attempt to write to tee again
+					if err := f.Close(); err != nil {
+						slog.Error(
+							"failed to close tee tmp file near end of transcode",
+							"error", err,
+						)
+						return nil
+					}
+
+					if err := os.Rename(tmpFilePath, as.dstFilePath); err != nil {
+						slog.Error(
+							"failed to rename file",
+							"error", err,
+							"src", tmpFilePath,
+							"dst", as.dstFilePath,
+						)
+						return err
+					}
+
+					// tmp file is now gone, don't try to remove it
+					tmpFilePathCleanup = nil
+
+					slog.Debug(
+						"cached audio stream",
+						"src_url", as.srcVideoUrlStr,
+						"dst_path", as.dstFilePath,
+					)
+
+					return nil
+				}(); renameErr != nil {
+					return i, renameErr
 				}
-
-				// tmp file is now gone, don't try to remove it
-				tmpFilePathCleanup = nil
-
-				log.Debug().
-					Str("src_url", as.srcVideoUrlStr).
-					Str("dst_path", as.dstFilePath).
-					Msg("cached audio stream")
-
-				return i, err
-			} else {
-				cancel()
 			}
 
+			cancel()
+
 			return i, err
+		}
+
+		if teeOK && i > 0 {
+			if _, err := teeDst.Write(b[:i]); err != nil {
+				teeOK = false
+				slog.Error(
+					"failed to append to tee tmp file",
+					"error", err,
+				)
+			}
 		}
 
 		return i, nil
@@ -575,9 +669,10 @@ func (as *audioStream) ReadCloser(ctx context.Context, wg *sync.WaitGroup) (io.R
 // and it cannot be mixed with the async ReadCloser func.
 func (as *audioStream) DownloadAndTranscode(ctx context.Context) error {
 
-	log.Debug().
-		Str("url", as.srcVideoUrlStr).
-		Msg("downloading and transcoding to cache")
+	slog.Debug(
+		"downloading and transcoding to cache",
+		"url", as.srcVideoUrlStr,
+	)
 
 	cacheDir := path.Dir(as.dstFilePath)
 
@@ -585,7 +680,7 @@ func (as *audioStream) DownloadAndTranscode(ctx context.Context) error {
 		return fmt.Errorf("failed to make cache directory: %s: %w", cacheDir, err)
 	}
 
-	tmpF, err := ioutil.TempFile(cacheDir, "melody-bot.*.audio.s16le.tmp")
+	tmpF, err := os.CreateTemp(cacheDir, "melody-bot.*.audio.s16le.tmp")
 	if err != nil {
 		return err
 	}
@@ -605,10 +700,11 @@ func (as *audioStream) DownloadAndTranscode(ctx context.Context) error {
 		}
 	}()
 
-	log.Debug().
-		Int64("content-length", as.Format.ContentLength).
-		Str("video-url", as.srcVideoUrlStr).
-		Msg("getting stream")
+	slog.Debug(
+		"getting stream",
+		"content-length", as.Format.ContentLength,
+		"video-url", as.srcVideoUrlStr,
+	)
 
 	f, s, err := as.getStream(ctx, as.Video, as.Format)
 	if err != nil {
@@ -651,7 +747,7 @@ func (as *audioStream) DownloadAndTranscode(ctx context.Context) error {
 		return fmt.Errorf("unexpected stream size detected on open, expected %d, got %d", as.size, s)
 	}
 
-	cmd := exec.CommandContext(ctx, "bash", "-c", "set -eo pipefail && ffmpeg -f mp4 -y -loglevel quiet -i pipe: -ar "+strconv.Itoa(service.SampleRate)+" -ac 1 -vn -f s16le "+shellEscape(tmpFilePath))
+	cmd := exec.CommandContext(ctx, "ffmpeg", "-f", "mp4", "-y", "-loglevel", "quiet", "-i", "pipe:", "-ar", strconv.Itoa(service.SampleRate), "-ac", "1", "-vn", "-f", "s16le", tmpFilePath)
 	cmd.Stdin = cr
 
 	if err := cmd.Run(); err != nil {
@@ -661,21 +757,24 @@ func (as *audioStream) DownloadAndTranscode(ctx context.Context) error {
 	if cr.bytesRead != as.size {
 		err := errors.New("unexpected end of stream during DownloadAndTranscode")
 
-		log.Err(err).
-			Str("src_url", as.srcVideoUrlStr).
-			Str("dst_path", as.dstFilePath).
-			Int64("bytes_read", cr.bytesRead).
-			Int64("size", as.size).
-			Msg("failed to download all bytes from source stream for transcode+cache")
+		slog.Error(
+			"failed to download all bytes from source stream for transcode+cache",
+			"error", err,
+			"src_url", as.srcVideoUrlStr,
+			"dst_path", as.dstFilePath,
+			"bytes_read", cr.bytesRead,
+			"size", as.size,
+		)
 
 		return err
 	}
 
 	if err := os.Rename(tmpFilePath, as.dstFilePath); err != nil {
-		log.Err(err).
-			Str("src", tmpFilePath).
-			Str("dst", as.dstFilePath).
-			Msg("failed to rename file")
+		slog.Error(
+			"failed to rename file",
+			"src", tmpFilePath,
+			"dst", as.dstFilePath,
+		)
 
 		return err
 	}
@@ -759,16 +858,15 @@ func handlePlayRequest(ctx context.Context, s *discordgo.Session, m *discordgo.M
 
 			defer closePlayPack()
 
-			log.Ctx(ctx).Error().
-				Err(errors.New("panicking")).
-				Msg("this should never happen: open a ticket")
+			logging.Context(ctx).ErrorContext(ctx,
+				"this should never happen",
+				"error", errors.New("panicking"),
+				"recommendation", "open a ticket",
+			)
 		}
 	}()
 
-	if handled, err := processPlaylist(ctx, s, m, p, play, closePlayPack, urlStr); err != nil {
-		closePlayPack()
-		return err
-	} else if handled {
+	if processPlaylist(ctx, s, m, p, play, closePlayPack, urlStr) {
 		// handling async, don't close the play package
 		return nil
 	}
@@ -778,21 +876,25 @@ func handlePlayRequest(ctx context.Context, s *discordgo.Session, m *discordgo.M
 	return playAfterTranscode(ctx, s, m, p, play, urlStr)
 }
 
-var ErrPanicInPlaylistLoader = errors.New("Panic in playlist loader")
+var ErrPanicInPlaylistLoader = errors.New("panic in playlist loader")
 
-func processPlaylist(ctx context.Context, s *discordgo.Session, m *discordgo.MessageCreate, p *service.Player, play func(context.Context, *audioStream), closePlayPack func(), urlStr string) (bool, error) {
+//nolint:gocyclo
+func processPlaylist(ctx context.Context, s *discordgo.Session, m *discordgo.MessageCreate, p *service.Player, play func(context.Context, *audioStream), closePlayPack func(), urlStr string) bool {
 	var result bool
 
 	ac := newYoutubeApiClient()
 
 	var u *url.URL
-	if v, err := url.Parse(urlStr); err != nil || v == nil {
-		log.Ctx(ctx).Debug().
-			Err(err).
-			Str("url", urlStr).
-			Msg("failed to parse url argument")
-		return result, nil
-	} else {
+	{
+		v, err := url.Parse(urlStr)
+		if err != nil || v == nil {
+			logging.Context(ctx).DebugContext(ctx,
+				"failed to parse url argument",
+				"url", urlStr,
+			)
+			return result
+		}
+
 		u = v
 	}
 
@@ -801,10 +903,11 @@ func processPlaylist(ctx context.Context, s *discordgo.Session, m *discordgo.Mes
 	}
 
 	if u.Path != "/playlist" && u.Path != "/playlist/" {
-		log.Ctx(ctx).Debug().
-			Str("url", urlStr).
-			Msg("not a playlist url")
-		return result, nil
+		logging.Context(ctx).DebugContext(ctx,
+			"not a playlist url",
+			"url", urlStr,
+		)
+		return result
 	}
 
 	// take ownership of the request handling context:
@@ -872,13 +975,9 @@ func processPlaylist(ctx context.Context, s *discordgo.Session, m *discordgo.Mes
 
 			// ensure that the bot is first in a voice channel
 			{
-				c, err := findVoiceChannel(s, m, p)
+				_, err := findVoiceChannel(s, m, p)
 				if err != nil {
 					return fmt.Errorf("failed to auto-join a voice channel: %w", err)
-				}
-
-				if c == nil {
-					return errors.New("not in a voice channel")
 				}
 			}
 
@@ -903,17 +1002,19 @@ func processPlaylist(ctx context.Context, s *discordgo.Session, m *discordgo.Mes
 				}
 
 				if err := as.SelectDownloadURL(ctx); err != nil {
-					log.Ctx(ctx).Err(err).
-						Str("track", as.srcVideoUrlStr).
-						Msg("failed to select download url")
+					logging.Context(ctx).ErrorContext(ctx,
+						"failed to select download url",
+						"error", err,
+						"track", as.srcVideoUrlStr,
+					)
 
 					p.BroadcastTextMessage("Failed to queue " + as.srcVideoUrlStr)
 
-					numFailed += 1
+					numFailed++
 					continue
 				}
 
-				numSuccess += 1
+				numSuccess++
 
 				if err := ctx.Err(); err != nil {
 					return err
@@ -933,7 +1034,7 @@ func processPlaylist(ctx context.Context, s *discordgo.Session, m *discordgo.Mes
 		}()
 	}()
 
-	return result, nil
+	return result
 }
 
 func playAfterTranscode(ctx context.Context, s *discordgo.Session, m *discordgo.MessageCreate, p *service.Player, play func(context.Context, *audioStream), urlStr string) error {
@@ -944,13 +1045,9 @@ func playAfterTranscode(ctx context.Context, s *discordgo.Session, m *discordgo.
 
 	// ensure that the bot is first in a voice channel
 	{
-		c, err := findVoiceChannel(s, m, p)
+		_, err := findVoiceChannel(s, m, p)
 		if err != nil {
 			return fmt.Errorf("failed to auto-join a voice channel: %w", err)
-		}
-
-		if c == nil {
-			return errors.New("not in a voice channel")
 		}
 	}
 
@@ -973,6 +1070,7 @@ func playAfterTranscode(ctx context.Context, s *discordgo.Session, m *discordgo.
 	return nil
 }
 
+//nolint:unparam
 func findVoiceChannel(s *discordgo.Session, m *discordgo.MessageCreate, p *service.Player) (*discordgo.VoiceConnection, error) {
 
 	result := func() *discordgo.VoiceConnection {
@@ -1003,13 +1101,12 @@ func findVoiceChannel(s *discordgo.Session, m *discordgo.MessageCreate, p *servi
 	}
 
 	if chanID == "" {
-		return nil, nil
+		return nil, ErrVoiceChannelNotFound
 	}
 
 	mute := false
 	deaf := true
 
-	err = nil
 	for tryCount := 0; tryCount < 6; tryCount++ {
 		result, err = s.ChannelVoiceJoin(m.GuildID, chanID, mute, deaf) // can take up to 10 seconds to return a timeout error
 		if err == nil {

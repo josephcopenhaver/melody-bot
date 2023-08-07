@@ -13,6 +13,7 @@
 /build
 # prevent secrets from getting commited
 /secret
-/secrets
+secrets/**/*
+!secrets/empty.env
 /.media-cache
 /.media-meta-cache
