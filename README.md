@@ -5,8 +5,8 @@ My discord bot
 ## build steps:
 
 ```sh
-ONLY_BUILD=y ./scripts/shell.sh
-./scripts/build-all-images.sh
+mage shell # can prefix with "NOBUILD=y" to avoid rebuilding the shell container
+mage build
 ```
 
 ## configure stack:
@@ -20,25 +20,25 @@ code ./secrets/test.env
 ## create stack (with new build):
 
 ```sh
-BUILD=y ./scripts/up.sh
+mage up
 ```
 
 ## create stack (with old build):
 
 ```sh
-./scripts/up.sh
+NOBUILD=y mage up
 ```
 
 ## teardown stack
 
 ```sh
-./scripts/down.sh
+mage down
 ```
 
 ## cleanup build output and volumes
 
 ```sh
-./scripts/clean.sh
+mage clean
 ```
 
 ## required bot permissions
@@ -60,9 +60,17 @@ output of "@bot help" in a guild channel or "help" when talking to the bot in a 
 # help:
 #
 
+cache-url:
+  usage: cache <url>
+  description: process music from a video url for playing at a future time
+
+clear cache:
+  usage: clear cache
+  description: stops all players and clears files in the audio cache
+
 clear-playlist:
   usage: clear playlist
-  description: removes all tracks in the playlist
+  description: removes all tracks in the playlist: alias for reset
 
 echo:
   usage: echo <message>
@@ -96,13 +104,17 @@ previous:
   usage: <previous|prev>
   description: move playback to the previous track in the playlist
 
+remove-track:
+  usage: remove <track_url>
+  description: removes a track from the playlist
+
 repeat:
   usage: repeat
   description: cycles playlist repeat mode between ["repeating", "not repeating"]
 
 reset:
   usage: reset
-  description: resets player state back to defaults
+  description: resets player state back to defaults: stops playback and clears the playlist
 
 restart-track:
   usage: restart track

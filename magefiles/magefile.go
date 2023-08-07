@@ -103,11 +103,34 @@ func baseComposeCmd() *Cmd {
 		panic(errors.New("PWD not defined"))
 	}
 
+	defaultLayers := []string{"networks", "default"}
+	allLayers := defaultLayers
+
+	var sb strings.Builder
+	for _, v := range allLayers {
+
+		if sb.Len() != 0 && len(v) > 0 {
+			if _, err := sb.WriteRune(os.PathListSeparator); err != nil {
+				panic(err)
+			}
+		}
+
+		if _, err := sb.WriteString(cwd); err != nil {
+			panic(err)
+		}
+		if _, err := sb.WriteString("/docker/"); err != nil {
+			panic(err)
+		}
+		if _, err := sb.WriteString(v); err != nil {
+			panic(err)
+		}
+		if _, err := sb.WriteString("/docker-compose.yml"); err != nil {
+			panic(err)
+		}
+	}
+
 	return NewCmd("docker-compose").
-		AppendEnv("COMPOSE_FILE=" + strings.Join([]string{
-			filepath.Join(cwd, "docker/networks/docker-compose.yml"),
-			filepath.Join(cwd, "docker/default/docker-compose.yml"),
-		}, string(os.PathListSeparator)))
+		AppendEnv("COMPOSE_FILE=" + sb.String())
 }
 
 func vars(ctx context.Context) {
@@ -196,6 +219,9 @@ func initSecrets(ctx context.Context) error {
 }
 
 func down(ctx context.Context, removeVolumes bool) error {
+
+	// TODO: teardown based on network membership and then services rather than just services
+	// bc down fails if there is an active shell... feature or bug?
 
 	composeArgs := []string{
 		"down", "",
@@ -359,8 +385,10 @@ func Up(ctx context.Context) error {
 
 	baseCmd := baseComposeCmd()
 
-	if err := baseCmd.Clone().ReplaceArgs("build").Run(ctx); err != nil {
-		return err
+	if v, err := strconv.ParseBool(os.Getenv("NOBUILD")); err != nil || !v {
+		if err := baseCmd.Clone().ReplaceArgs("build").Run(ctx); err != nil {
+			return err
+		}
 	}
 
 	if err := baseCmd.Clone().ReplaceArgs("up", "-d").Run(ctx); err != nil {
@@ -475,8 +503,10 @@ func Shell(ctx context.Context) error {
 	composeFile := shellComposeFileEnv(cwd)
 	baseCmd := NewCmd("docker-compose").AppendEnv(composeFile)
 
-	if err := baseCmd.Clone().ReplaceArgs("build", "shell").Run(ctx); err != nil {
-		return err
+	if v, err := strconv.ParseBool(os.Getenv("NOBUILD")); err != nil || !v {
+		if err := baseCmd.Clone().ReplaceArgs("build", "shell").Run(ctx); err != nil {
+			return err
+		}
 	}
 
 	// setting stdin is required to avoid "the input device is not a TTY" errors
