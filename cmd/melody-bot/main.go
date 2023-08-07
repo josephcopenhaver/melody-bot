@@ -30,14 +30,14 @@ func rootContext() (context.Context, func()) { //nolint:gocritic
 	go func() {
 		defer cancel()
 
-		done := ctx.Done()
+		ctxDone := ctx.Done()
 
 		var requester string
 		select {
 		case <-procDone:
-			requester = "user"
-		case <-done:
-			requester = "process"
+			requester = "external"
+		case <-ctxDone:
+			requester = "internal"
 		}
 
 		slog.Warn(
@@ -57,6 +57,7 @@ func panicLog(msg string, vargs ...any) {
 	panic(errors.New(msg))
 }
 
+//nolint:unparam
 func panicErrLog(err error, msg string, vargs ...any) {
 	slog.With("error", err).Error(msg, vargs...)
 	panic(fmt.Errorf("%s: %w", msg, err))

@@ -89,7 +89,7 @@ func (lr *logResolver) Get() *slog.Logger {
 	return lr.logger
 }
 
-var logResolverPool sync.Pool = sync.Pool{
+var logResolverPool = sync.Pool{
 	New: func() any {
 		return &logResolver{}
 	},
@@ -100,7 +100,11 @@ func AddResolverToContext(ctx context.Context, f func() *slog.Logger) (context.C
 		panic(errors.New("log resolver function must not be nil"))
 	}
 
-	v := logResolverPool.Get().(*logResolver)
+	v, ok := logResolverPool.Get().(*logResolver)
+	if !ok || v == nil {
+		panic(errors.New("unreachable"))
+	}
+
 	v.f = f
 	v.logger = nil
 

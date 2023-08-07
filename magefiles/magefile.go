@@ -110,9 +110,10 @@ func baseComposeCmd() *Cmd {
 		}, string(os.PathListSeparator)))
 }
 
-func vars() {
+func vars(ctx context.Context) {
 	type defaultedVar struct {
 		Name, Default string
+		Resolver      func(context.Context) (string, error)
 	}
 
 	const projectName = "josephcopenhaver--melody-bot"
@@ -124,18 +125,54 @@ func vars() {
 	}
 
 	vars := []defaultedVar{
-		{"COMPOSE_DOCKER_CLI_BUILD", "1"},
-		{"DOCKER_BUILDKIT", "1"},
-		{"ENV", "empty"},
-		{"NETWORK_PREFIX_INFRASTRUCTURE", prefix},
-		{"NETWORK_PREFIX_FRONTEND", prefix},
-		{"COMPOSE_PROJECT_NAME", projectName},
-		{"COMPOSE_IGNORE_ORPHANS", "false"},
-		{"PWD", pwd},
+		{"COMPOSE_DOCKER_CLI_BUILD", "1", nil},
+		{"DOCKER_BUILDKIT", "1", nil},
+		{"ENV", "empty", nil},
+		{"NETWORK_PREFIX_INFRASTRUCTURE", prefix, nil},
+		{"NETWORK_PREFIX_FRONTEND", prefix, nil},
+		{"COMPOSE_PROJECT_NAME", projectName, nil},
+		{"COMPOSE_IGNORE_ORPHANS", "false", nil},
+		{"PWD", pwd, nil},
+		{"OS", "", func(ctx context.Context) (string, error) {
+			cmd := NewCmd("uname", "-s").CaptureOut()
+			if err := cmd.Run(ctx); err != nil {
+				return "", err
+			}
+
+			return cmd.OutString(strings.TrimSpace, strings.ToLower), nil
+		}},
+		{"ARCH", "", func(ctx context.Context) (string, error) {
+			cmd := NewCmd("uname", "-m").CaptureOut()
+			if err := cmd.Run(ctx); err != nil {
+				return "", err
+			}
+
+			s := cmd.OutString(strings.TrimSpace, strings.ToLower)
+			switch s {
+			case "x86_64":
+				return "amd64", nil
+			case "aarch64":
+				return "arm64", nil
+			default:
+				return s, nil
+			}
+		}},
+		{"GOLANGCILINT_VERSION", "v1.53.3", nil},
+		{"GOLANGCILINT_BIN", "", func(ctx context.Context) (string, error) {
+			return filepath.Join("magefiles/cache/golangci-lint", fmt.Sprintf("%s-%s-%s", strings.TrimLeft(os.Getenv("GOLANGCILINT_VERSION"), "v"), os.Getenv("OS"), os.Getenv("ARCH")), "golangci-lint"), nil
+		}},
 	}
 
 	for _, dv := range vars {
-		if os.Getenv(dv.Name) == "" {
+		if _, ok := os.LookupEnv(dv.Name); !ok {
+			if f := dv.Resolver; f != nil {
+				dv.Resolver = nil
+				if v, err := f(ctx); err != nil {
+					panic(fmt.Errorf("Failed to resolve value for %s: %w", dv.Name, err))
+				} else {
+					dv.Default = v
+				}
+			}
 			if err := os.Setenv(dv.Name, dv.Default); err != nil {
 				panic(fmt.Errorf("Failed to set default value for %s to '%s': %w", dv.Name, dv.Default, err))
 			}
@@ -545,4 +582,69 @@ func Test(ctx context.Context) error {
 		Arg("mage test").
 		New()...).
 		AppendEnv(composeFile).Run(ctx)
+}
+
+func installLinter(ctx context.Context) error {
+
+	mg.Deps(vars)
+
+	const lintCacheDir = "./magefiles/cache/golangci-lint"
+	if err := os.MkdirAll(lintCacheDir, 0775); err != nil {
+		return err
+	}
+
+	dstBin := os.Getenv("GOLANGCILINT_BIN")
+	dstBinDir := filepath.Dir(dstBin)
+	verOsPlat := filepath.Base(dstBinDir)
+
+	// example url: https://github.com/golangci/golangci-lint/releases/download/v1.53.3/golangci-lint-1.53.3-freebsd-amd64.tar.gz
+
+	fname := fmt.Sprintf("golangci-lint-%s.tar.gz", verOsPlat)
+	dstFile := filepath.Join(lintCacheDir, fname)
+	if !fileObjExists(dstFile) {
+		if fileObjExists(dstFile + ".tmp") {
+			if err := os.Remove(dstFile + ".tmp"); err != nil {
+				return err
+			}
+		}
+
+		url := fmt.Sprintf("https://github.com/golangci/golangci-lint/releases/download/v%s/%s", strings.TrimLeft(os.Getenv("GOLANGCILINT_VERSION"), "v"), fname)
+		if err := NewCmd("curl", "-fsSL", url, "-o", dstFile+".tmp").Run(ctx); err != nil {
+			return err
+		}
+
+		if err := os.Rename(dstFile+".tmp", dstFile); err != nil {
+			return err
+		}
+	}
+
+	if !fileObjExists(dstBin) {
+		if err := NewCmd("tar", "-xf", dstFile, "-C", lintCacheDir).Run(ctx); err != nil {
+			return err
+		}
+
+		if err := os.Rename(filepath.Join(filepath.Dir(dstBinDir), "golangci-lint-"+filepath.Base(dstBinDir)), dstBinDir); err != nil {
+			return err
+		}
+
+		if err := os.Remove(dstFile); err != nil {
+			return err
+		}
+	}
+
+	if err := NewCmd(os.Getenv("GOLANGCILINT_BIN"), "version").Run(ctx); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func Lint(ctx context.Context) error {
+	mg.Deps(installLinter)
+
+	if err := NewCmd(os.Getenv("GOLANGCILINT_BIN"), "run", "--skip-dirs", `^(vendor-ext)/.*`).Run(ctx); err != nil {
+		return err
+	}
+
+	return nil
 }

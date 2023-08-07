@@ -35,6 +35,11 @@ jobs:
         with:
           version: ${{ env.MAGE_VERSION }}
           args: buildallimages
+      - name: lint
+        uses: magefile/mage-action@v2
+        with:
+          version: ${{ env.MAGE_VERSION }}
+          args: lint
       - name: test
         uses: magefile/mage-action@v2
         with:
