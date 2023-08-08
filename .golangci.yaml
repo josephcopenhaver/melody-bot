@@ -482,7 +482,7 @@ linters:
     - testpackage
     - thelper
     - tparallel
-    # - typecheck # TODO: false positives in go1.21 for new generic min/max internals
+    - typecheck
     - unconvert
     - unparam
     - unused
@@ -507,6 +507,9 @@ issues:
     - text: "context-as-argument: context.Context should be the first parameter of a function"
       path: (?:_test|/(?:testing|mocks)/.*)\.go
       linters: [revive]
+    # TODO: update toolchain to support new go1.21 generic builtin functions
+    - text: "undefined:\\s*(?:min|max|clear)\\s*$"
+      linters: [typecheck]
 
 severity:
   default-severity: ""
