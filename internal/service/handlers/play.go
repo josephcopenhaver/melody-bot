@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"os"
@@ -19,15 +20,12 @@ import (
 	"sync"
 	"time"
 
-	"log/slog"
-
 	"github.com/bwmarrin/discordgo"
-	"github.com/kkdai/youtube/v2"
-
 	"github.com/josephcopenhaver/melody-bot/internal/cache"
 	"github.com/josephcopenhaver/melody-bot/internal/logging"
 	"github.com/josephcopenhaver/melody-bot/internal/service"
 	"github.com/josephcopenhaver/melody-bot/internal/service/server/reactions"
+	"github.com/kkdai/youtube/v2"
 )
 
 const (

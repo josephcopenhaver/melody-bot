@@ -3,6 +3,7 @@ package server
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"strings"
 
 	"github.com/bwmarrin/discordgo"
@@ -10,7 +11,6 @@ import (
 	"github.com/josephcopenhaver/melody-bot/internal/service"
 	"github.com/josephcopenhaver/melody-bot/internal/service/handlers"
 	"github.com/josephcopenhaver/melody-bot/internal/service/server/reactions"
-	"log/slog"
 )
 
 //nolint:gocyclo
