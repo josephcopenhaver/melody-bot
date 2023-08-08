@@ -482,7 +482,7 @@ linters:
     - testpackage
     - thelper
     - tparallel
-    - typecheck
+    # - typecheck # TODO: false positives in go1.21 for new generic min/max internals
     - unconvert
     - unparam
     - unused
