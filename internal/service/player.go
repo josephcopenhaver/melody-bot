@@ -13,7 +13,7 @@ import (
 	"time"
 
 	"github.com/josephcopenhaver/gopus"
-	"golang.org/x/exp/slog"
+	"log/slog"
 
 	"github.com/bwmarrin/discordgo"
 	"github.com/google/uuid"

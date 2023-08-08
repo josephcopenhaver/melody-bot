@@ -12,7 +12,7 @@ import (
 	"github.com/josephcopenhaver/melody-bot/internal/service"
 	"github.com/josephcopenhaver/melody-bot/internal/service/config"
 	"github.com/josephcopenhaver/melody-bot/internal/service/server"
-	"golang.org/x/exp/slog"
+	"log/slog"
 )
 
 // rootContext returns a context that is canceled when the

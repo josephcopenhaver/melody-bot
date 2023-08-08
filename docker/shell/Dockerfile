@@ -1,4 +1,5 @@
-ARG DOCKER_GO_VERSION=1.20.2-bullseye
+# TODO: don't use RC - ref https://hub.docker.com/_/golang
+ARG DOCKER_GO_VERSION=1.21-rc-bookworm
 
 FROM golang:${DOCKER_GO_VERSION}
 
@@ -34,7 +35,7 @@ RUN export DEBIAN_FRONTEND=noninteractive \
     make \
     ncftp \
     net-tools \
-    netcat \
+    netcat-openbsd \
     redir \
     rsync \
     software-properties-common \
@@ -55,7 +56,7 @@ RUN export DEBIAN_FRONTEND=noninteractive \
     python3-pip \
     python3-wheel \
     && rm -rf /var/lib/apt/lists/* \
-    && pip3 install \
+    && pip3 install --break-system-packages \
     cfn-lint \
     yq \
     && ( \

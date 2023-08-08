@@ -13,7 +13,7 @@ import (
 	"github.com/bwmarrin/discordgo"
 	"github.com/josephcopenhaver/melody-bot/internal/service"
 	"github.com/josephcopenhaver/melody-bot/internal/service/server/reactions"
-	"golang.org/x/exp/slog"
+	"log/slog"
 )
 
 type serialTaskRunner struct {

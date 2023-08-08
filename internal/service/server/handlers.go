@@ -10,7 +10,7 @@ import (
 	"github.com/josephcopenhaver/melody-bot/internal/service"
 	"github.com/josephcopenhaver/melody-bot/internal/service/handlers"
 	"github.com/josephcopenhaver/melody-bot/internal/service/server/reactions"
-	"golang.org/x/exp/slog"
+	"log/slog"
 )
 
 //nolint:gocyclo

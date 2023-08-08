@@ -276,7 +276,7 @@ func Build(ctx context.Context) error {
 	cmd = NewCmd(
 		CmdB().
 			Fields("go build -o build/bin -tags netgo -ldflags").
-			Arg("-extldflags=-static -X main.GitSHA=" + commitSha(ctx, "") + " -X main.Version=" + version(ctx)).
+			Arg("-linkmode=external -extldflags=-static -X main.GitSHA=" + commitSha(ctx, "") + " -X main.Version=" + version(ctx)).
 			Arg("./cmd/...").
 			New()...,
 	).

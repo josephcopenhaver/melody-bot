@@ -8,7 +8,7 @@ import (
 	"github.com/bwmarrin/discordgo"
 	"github.com/josephcopenhaver/melody-bot/internal/service"
 	"github.com/josephcopenhaver/melody-bot/internal/service/handlers"
-	"golang.org/x/exp/slog"
+	"log/slog"
 )
 
 type EventHandlers struct {

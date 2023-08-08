@@ -7,7 +7,7 @@ import (
 	"os"
 	"sync"
 
-	"golang.org/x/exp/slog"
+	"log/slog"
 )
 
 // TODO: if an error implements fmt.Formatter then treat it's output as the stack trace

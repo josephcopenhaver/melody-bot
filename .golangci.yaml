@@ -1,7 +1,6 @@
 # https://github.com/golangci/golangci-lint/blob/v1.53.3/.golangci.reference.yml
 # and should only be used with v1.53.3 of golangci-lint
 
-
 run:
   timeout: 5m
   issues-exit-code: 1
@@ -14,8 +13,7 @@ run:
   skip-files: []
   modules-download-mode: readonly
   allow-parallel-runners: false
-  go: '1.20'
-
+  go: "1.21"
 
 output:
   format: colored-line-number
@@ -24,7 +22,6 @@ output:
   uniq-by-line: true
   path-prefix: ""
   sort-results: true
-
 
 linters-settings:
   asasalint:
@@ -168,7 +165,7 @@ linters-settings:
     exclude-forbidden: false
 
   gosimple:
-    checks: [ "*" ]
+    checks: ["*"]
 
   gosec:
     includes: []
@@ -371,12 +368,12 @@ linters-settings:
     packages: []
 
   staticcheck:
-    checks: [ "*" ]
+    checks: ["*"]
 
   stylecheck:
-    checks: [ "*", "-ST1003", "-ST1005" ]
+    checks: ["*", "-ST1003", "-ST1005"]
     dot-import-whitelist: []
-    http-status-code-whitelist: [ "200", "400", "404", "500" ]
+    http-status-code-whitelist: ["200", "400", "404", "500"]
 
   tenv:
     all: false
@@ -418,7 +415,6 @@ linters-settings:
 
   unparam:
     check-exported: false
-
 
 linters:
   fast: false
@@ -493,26 +489,24 @@ linters:
     - usestdlibvars
     - wastedassign
 
-
 issues:
   exclude-rules:
     - text: 'shadow: declaration of "(?:err|ctx)" shadows declaration at'
-      linters: [ govet ]
+      linters: [govet]
     - path: _test\.go
       linters:
         - dupl
     - text: 'shadow: declaration of "[^"]+" shadows declaration at'
       path: _test\.go
-      linters: [ govet ]
-    - text: 'Function `.*` should pass the context parameter'
+      linters: [govet]
+    - text: "Function `.*` should pass the context parameter"
       path: _test\.go
-      linters: [ contextcheck ]
-    - text: 'err113: do not define dynamic errors, use wrapped static errors instead:'
-      linters: [ goerr113 ]
-    - text: 'context-as-argument: context.Context should be the first parameter of a function'
+      linters: [contextcheck]
+    - text: "err113: do not define dynamic errors, use wrapped static errors instead:"
+      linters: [goerr113]
+    - text: "context-as-argument: context.Context should be the first parameter of a function"
       path: (?:_test|/(?:testing|mocks)/.*)\.go
-      linters: [ revive ]
-
+      linters: [revive]
 
 severity:
   default-severity: ""
