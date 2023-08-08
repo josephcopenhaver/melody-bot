@@ -281,8 +281,9 @@ func Build(ctx context.Context) error {
 			New()...,
 	).
 		AppendEnvMap(map[string]string{
-			"CGO_CFLAGS":  "-O3",
-			"CGO_ENABLED": "1",
+			"GOEXPERIMENT": "loopvar", // temp until standard in go1.22+ https://github.com/golang/go/wiki/LoopvarExperiment
+			"CGO_CFLAGS":   "-O3",
+			"CGO_ENABLED":  "1",
 		})
 	if err := cmd.Run(ctx); err != nil {
 		return err
@@ -571,7 +572,7 @@ func Logs(ctx context.Context) error {
 
 func Test(ctx context.Context) error {
 
-	const testCmd = `go test ./... && go test -race ./...`
+	const testCmd = `export GOEXPERIMENT='loopvar' && go test ./... && go test -race ./...`
 
 	if os.Getenv("IN_DOCKER_CONTAINER") != "" {
 		return NewCmd(CmdB().Fields("bash -c").Arg(testCmd).New()...).Run(ctx)
