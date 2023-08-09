@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"os/signal"
 	"syscall"
@@ -12,7 +13,6 @@ import (
 	"github.com/josephcopenhaver/melody-bot/internal/service"
 	"github.com/josephcopenhaver/melody-bot/internal/service/config"
 	"github.com/josephcopenhaver/melody-bot/internal/service/server"
-	"golang.org/x/exp/slog"
 )
 
 // rootContext returns a context that is canceled when the

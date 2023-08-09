@@ -1,6 +1,6 @@
 module github.com/josephcopenhaver/melody-bot
 
-go 1.20
+go 1.21
 
 require (
 	github.com/bwmarrin/discordgo v0.27.1
@@ -12,7 +12,6 @@ require (
 	github.com/kkdai/youtube/v2 v2.7.18
 	github.com/magefile/mage v1.15.0
 	github.com/smartystreets/goconvey v1.6.4
-	golang.org/x/exp v0.0.0-20230801115018-d63ba01acd4b
 )
 
 require (

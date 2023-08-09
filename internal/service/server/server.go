@@ -3,12 +3,12 @@ package server
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"sync"
 
 	"github.com/bwmarrin/discordgo"
 	"github.com/josephcopenhaver/melody-bot/internal/service"
 	"github.com/josephcopenhaver/melody-bot/internal/service/handlers"
-	"golang.org/x/exp/slog"
 )
 
 type EventHandlers struct {

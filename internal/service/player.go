@@ -7,16 +7,15 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"runtime/debug"
 	"sync"
 	"sync/atomic"
 	"time"
 
-	"github.com/josephcopenhaver/gopus"
-	"golang.org/x/exp/slog"
-
 	"github.com/bwmarrin/discordgo"
 	"github.com/google/uuid"
+	"github.com/josephcopenhaver/gopus"
 )
 
 type PlaylistID struct {
