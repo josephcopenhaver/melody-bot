@@ -21,7 +21,8 @@ import (
 //
 
 func version(ctx context.Context) string {
-	cmd := NewCmd(CmdB().Fields("head -1 version.txt").New()...).
+	cmd := NewCmd().
+		Fields("head -1 version.txt").
 		CaptureOut()
 	if err := cmd.Run(ctx); err != nil {
 		panic(err)
@@ -259,7 +260,7 @@ func Build(ctx context.Context) error {
 	mg.Deps(InstallDeps)
 
 	fmt.Println("Building...")
-	if err := NewCmd(CmdB().Fields("mkdir -p build/bin").New()...).Run(ctx); err != nil {
+	if err := NewCmd().Fields("mkdir -p build/bin").Run(ctx); err != nil {
 		return err
 	}
 
@@ -273,13 +274,10 @@ func Build(ctx context.Context) error {
 		return errors.New("failed to verify mage version is set consistently")
 	}
 
-	cmd = NewCmd(
-		CmdB().
-			Fields("go build -o build/bin -tags netgo -ldflags").
-			Arg("-linkmode=external -extldflags=-static -X main.GitSHA=" + commitSha(ctx, "") + " -X main.Version=" + version(ctx)).
-			Arg("./cmd/...").
-			New()...,
-	).
+	cmd = NewCmd().
+		Fields("go build -o build/bin -tags netgo -ldflags").
+		Arg("-linkmode=external -extldflags=-static -X main.GitSHA=" + commitSha(ctx, "") + " -X main.Version=" + version(ctx)).
+		Arg("./cmd/...").
 		AppendEnvMap(map[string]string{
 			"GOEXPERIMENT": "loopvar", // temp until standard in go1.22+ https://github.com/golang/go/wiki/LoopvarExperiment
 			"CGO_CFLAGS":   "-O3",
@@ -433,7 +431,8 @@ func BuildAllImages(ctx context.Context) error {
 
 		composeFile := filepath.Join(cwd, "docker", layer, "docker-compose.yml")
 
-		cmd := NewCmd(CmdB().Fields("docker-compose build").New()...).
+		cmd := NewCmd().
+			Fields("docker-compose build").
 			AppendEnvMap(map[string]string{
 				"COMPOSE_FILE": strings.Join(append(append([]string(nil), baseComposeFiles...), composeFile), string(os.PathListSeparator)),
 			})
@@ -513,7 +512,7 @@ func Shell(ctx context.Context) error {
 	// setting stdin is required to avoid "the input device is not a TTY" errors
 	//
 	// this command ensures that the networks are created, nothing more
-	if err := baseCmd.Clone().ReplaceArgs(CmdB().Fields("run --rm --entrypoint bash shell -c").Arg("exit 0").New()...).Stdin(os.Stdin).Run(ctx); err != nil {
+	if err := baseCmd.Clone().ReplaceArgs().Fields("run --rm --entrypoint bash shell -c").Arg("exit 0").Stdin(os.Stdin).Run(ctx); err != nil {
 		return err
 	}
 
@@ -522,11 +521,11 @@ func Shell(ctx context.Context) error {
 		panic(errors.New("HOME not defined"))
 	}
 
-	if err := NewCmd(CmdB().Fields("mkdir -p").Arg(filepath.Join(homeDir, ".aws/cli/cache")).New()...).Run(ctx); err != nil {
+	if err := NewCmd().Fields("mkdir -p").Arg(filepath.Join(homeDir, ".aws/cli/cache")).Run(ctx); err != nil {
 		return err
 	}
 
-	if err := NewCmd(CmdB().Fields("mkdir -p").Arg(filepath.Join(cwd, ".devcontainer/cache")).New()...).Run(ctx); err != nil {
+	if err := NewCmd().Fields("mkdir -p").Arg(filepath.Join(cwd, ".devcontainer/cache")).Run(ctx); err != nil {
 		return err
 	}
 
@@ -534,7 +533,7 @@ func Shell(ctx context.Context) error {
 	if gitsha == "" {
 		gitsha = "latest"
 	}
-	return NewCmd(CmdB().
+	return NewCmd().
 		Fields("docker run --rm -it").
 		Args("--network", network).
 		Args("--env-file", filepath.Join(cwd, ".devcontainer/env")).
@@ -551,19 +550,18 @@ func Shell(ctx context.Context) error {
 		Args("-v", filepath.Join(cwd, ".devcontainer/cache/bash_history")+":/root/.bash_history").
 		Fields("--entrypoint bash").
 		Arg("josephcopenhaver/melody-bot--shell:" + gitsha).
-		New()...).
 		AppendEnv(composeFile).Exec()
 }
 
 func Logs(ctx context.Context) error {
 	mg.Deps(vars)
 
-	argsb := CmdB().Fields("logs -f")
+	args := strings.Fields("logs -f")
 	if s := os.Getenv("SERVICES"); s != "" {
-		argsb.Fields(s)
+		args = append(strings.Fields(strings.TrimSpace(s)))
 	}
 
-	if err := baseComposeCmd().ReplaceArgs(argsb.New()...).Run(ctx); err != nil {
+	if err := baseComposeCmd().ReplaceArgs(args...).Run(ctx); err != nil {
 		return err
 	}
 
@@ -575,7 +573,7 @@ func Test(ctx context.Context) error {
 	const testCmd = `export GOEXPERIMENT='loopvar' && go test ./... && go test -race ./...`
 
 	if os.Getenv("IN_DOCKER_CONTAINER") != "" {
-		return NewCmd(CmdB().Fields("bash -c").Arg(testCmd).New()...).Run(ctx)
+		return NewCmd().Fields("bash -c").Arg(testCmd).Run(ctx)
 	}
 
 	mg.Deps(vars)
@@ -588,7 +586,7 @@ func Test(ctx context.Context) error {
 	// setting stdin is required to avoid "the input device is not a TTY" errors
 	//
 	// this command ensures that the networks are created, nothing more
-	if err := baseCmd.Clone().ReplaceArgs(CmdB().Fields("run --rm --entrypoint bash shell -c").Arg("exit 0").New()...).Stdin(os.Stdin).Run(ctx); err != nil {
+	if err := baseCmd.Clone().ReplaceArgs().Fields("run --rm --entrypoint bash shell -c").Arg("exit 0").Stdin(os.Stdin).Run(ctx); err != nil {
 		return err
 	}
 
@@ -602,7 +600,7 @@ func Test(ctx context.Context) error {
 	if gitsha == "" {
 		gitsha = "latest"
 	}
-	return NewCmd(CmdB().
+	return NewCmd().
 		Fields("docker run --rm").
 		Fields("-e IN_DOCKER_CONTAINER=true").
 		Fields("-w /workspace").
@@ -611,7 +609,6 @@ func Test(ctx context.Context) error {
 		Arg("josephcopenhaver/melody-bot--shell:" + gitsha).
 		Arg("-c").
 		Arg("mage test").
-		New()...).
 		AppendEnv(composeFile).Run(ctx)
 }
 
