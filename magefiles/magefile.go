@@ -558,7 +558,7 @@ func Logs(ctx context.Context) error {
 
 	args := strings.Fields("logs -f")
 	if s := os.Getenv("SERVICES"); s != "" {
-		args = append(strings.Fields(strings.TrimSpace(s)))
+		args = append(args, strings.Fields(strings.TrimSpace(s))...)
 	}
 
 	if err := baseComposeCmd().ReplaceArgs(args...).Run(ctx); err != nil {
