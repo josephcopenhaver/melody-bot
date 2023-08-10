@@ -16,42 +16,6 @@ import (
 	"syscall"
 )
 
-type CmdBuilder struct {
-	cmdAndArgs []string
-}
-
-func CmdB() *CmdBuilder {
-	return &CmdBuilder{}
-}
-
-func (cb *CmdBuilder) Fields(s string) *CmdBuilder {
-	cb.cmdAndArgs = append(cb.cmdAndArgs, strings.Fields(strings.TrimSpace(s))...)
-
-	return cb
-}
-
-func (cb *CmdBuilder) Arg(s string) *CmdBuilder {
-	return cb.Args(s)
-}
-
-func (cb *CmdBuilder) Args(s ...string) *CmdBuilder {
-	cb.cmdAndArgs = append(cb.cmdAndArgs, s...)
-
-	return cb
-}
-
-func (cb *CmdBuilder) New() []string {
-	if len(cb.cmdAndArgs) == 0 {
-		return nil
-	}
-
-	v := make([]string, len(cb.cmdAndArgs))
-
-	copy(v, cb.cmdAndArgs)
-
-	return v
-}
-
 type Cmd struct {
 	envPre          []string
 	envPost         []string
@@ -76,6 +40,20 @@ func NewCmd(cmdAndArgs ...string) *Cmd {
 	return &Cmd{
 		cmdAndArgs: cmdAndArgs,
 	}
+}
+
+func (c *Cmd) Fields(s string) *Cmd {
+	return c.Args(strings.Fields(strings.TrimSpace(s))...)
+}
+
+func (c *Cmd) Arg(s string) *Cmd {
+	return c.Args(s)
+}
+
+func (c *Cmd) Args(s ...string) *Cmd {
+	c.cmdAndArgs = append(c.cmdAndArgs, s...)
+
+	return c
 }
 
 func (c *Cmd) EchoDisabled(b bool) *Cmd {

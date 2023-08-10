@@ -1,5 +1,4 @@
-# TODO: don't use RC - ref https://hub.docker.com/_/golang
-ARG DOCKER_GO_VERSION=1.21-rc-bookworm
+ARG DOCKER_GO_VERSION=1.21-bookworm
 
 FROM golang:${DOCKER_GO_VERSION}
 

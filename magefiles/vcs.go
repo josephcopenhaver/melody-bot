@@ -9,7 +9,8 @@ import (
 )
 
 func commitSha(ctx context.Context, dir string) string {
-	cmd := NewCmd(CmdB().Fields("git log -n 1 --pretty=format:%H").New()...).
+	cmd := NewCmd().
+		Fields("git log -n 1 --pretty=format:%H").
 		CaptureOut()
 
 	if dir != "" && dir != "." {
