@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -15,6 +16,44 @@ import (
 
 	"github.com/magefile/mage/mg" // mg contains helpful utility functions, like Deps
 )
+
+// init structured logging
+//
+//nolint:gochecknoinits
+func init() {
+	logLevel := slog.LevelInfo
+	if s := strings.TrimSpace(os.Getenv("LOG_LEVEL")); s != "" {
+		var v slog.Level
+		if err := v.UnmarshalText([]byte(s)); err != nil {
+			panic(err)
+		}
+		logLevel = v
+	}
+
+	var addSource bool
+	if s := strings.TrimSpace(os.Getenv("LOG_SOURCE")); s != "" {
+		v, err := strconv.ParseBool(s)
+		if err != nil {
+			panic(err)
+		}
+		addSource = v
+	}
+
+	var logHandler slog.Handler
+	if s := strings.ToLower(strings.TrimSpace(os.Getenv("LOG_FORMAT"))); s == "json" {
+		logHandler = slog.NewJSONHandler(os.Stderr, &slog.HandlerOptions{
+			AddSource: addSource,
+			Level:     logLevel,
+		})
+	} else {
+		logHandler = slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{
+			AddSource: addSource,
+			Level:     logLevel,
+		})
+	}
+
+	slog.SetDefault(slog.New(logHandler))
+}
 
 //
 // START helpers tightly coupled to this project
@@ -46,7 +85,7 @@ func (fss *fileSigsSet) MarkPost(ctx context.Context) error {
 	return fss.mark(ctx, &fss.goModPost, &fss.goSumPost)
 }
 
-func (fss *fileSigsSet) mark(ctx context.Context, goMod, goSum *fileSig) error {
+func (fss *fileSigsSet) mark(_ context.Context, goMod, goSum *fileSig) error {
 	if fname := "go.mod"; !fileObjExists(fname) {
 		return errors.New("missing go.mod file")
 	} else if err := goMod.ComputeSig(fname); err != nil {
@@ -62,7 +101,7 @@ func (fss *fileSigsSet) mark(ctx context.Context, goMod, goSum *fileSig) error {
 	return nil
 }
 
-func (fss *fileSigsSet) Validate() error {
+func (fss *fileSigsSet) Validate(ctx context.Context) error {
 	var errResp error
 
 	if s := fss.goModPre.Get(); s == "" {
@@ -87,9 +126,19 @@ func (fss *fileSigsSet) Validate() error {
 		}
 
 		if !ci {
-			fmt.Println("WARNING: " + errResp.Error())
+			slog.WarnContext(ctx,
+				"failed to sync dependencies",
+				"error", errResp,
+				"CI", ciStr,
+			)
 			return nil
 		}
+
+		slog.ErrorContext(ctx,
+			"failed to sync dependencies",
+			"error", errResp,
+			"CI", ciStr,
+		)
 
 		return errResp
 	}
@@ -204,7 +253,7 @@ func vars(ctx context.Context) {
 	}
 }
 
-func initSecrets(ctx context.Context) error {
+func initSecrets(_ context.Context) error {
 
 	if fname := filepath.Join("secrets", os.Getenv("ENV")+".env"); !fileObjExists(fname) {
 		f, err := os.Create(fname)
@@ -235,6 +284,10 @@ func down(ctx context.Context, removeVolumes bool) error {
 	}
 
 	if err := baseComposeCmd().ReplaceArgs(composeArgs...).Run(ctx); err != nil {
+		slog.ErrorContext(ctx,
+			"command failed",
+			"error", err,
+		)
 		return err
 	}
 
@@ -259,7 +312,9 @@ func shellComposeFileEnv(cwd string) string {
 func Build(ctx context.Context) error {
 	mg.Deps(InstallDeps)
 
-	fmt.Println("Building...")
+	slog.InfoContext(ctx,
+		"building",
+	)
 	if err := NewCmd().Fields("mkdir -p build/bin").Run(ctx); err != nil {
 		return err
 	}
@@ -287,7 +342,9 @@ func Build(ctx context.Context) error {
 		return err
 	}
 
-	fmt.Println("Done Building")
+	slog.InfoContext(ctx,
+		"done building",
+	)
 	return nil
 }
 
@@ -296,7 +353,9 @@ func Build(ctx context.Context) error {
 const JpcopeOpusVersion = "17c317f9c9e9545df42c4ffc0bb9252ee6261868"
 
 func InstallDeps(ctx context.Context) error {
-	fmt.Println("Installing Deps...")
+	slog.InfoContext(ctx,
+		"installing deps",
+	)
 
 	// establish a baseline for files that should remain unchanged through dependency install process
 	if err := fileSigs.MarkPre(ctx); err != nil {
@@ -326,7 +385,10 @@ func InstallDeps(ctx context.Context) error {
 			}
 		}
 
-		fmt.Println("rsync'ing vendor-ext/github.com/josephcopenhaver/gopus")
+		slog.InfoContext(ctx,
+			"rsync running",
+			"dst", "vendor-ext/github.com/josephcopenhaver/gopus",
+		)
 
 		if err := NewCmd("rsync", "-a", "--delete", "vendor-ext/github.com/josephcopenhaver/gopus/", "vendor/github.com/josephcopenhaver/gopus/").Run(ctx); err != nil {
 			return err
@@ -337,18 +399,22 @@ func InstallDeps(ctx context.Context) error {
 		return err
 	}
 
-	if err := fileSigs.Validate(); err != nil {
+	if err := fileSigs.Validate(ctx); err != nil {
 		return err
 	}
 
-	fmt.Println("Done Installing Deps")
+	slog.InfoContext(ctx,
+		"done installing deps",
+	)
 	return nil
 }
 
 func Clean(ctx context.Context) error {
 	mg.Deps(vars)
 
-	fmt.Println("Cleaning...")
+	slog.InfoContext(ctx,
+		"cleaning",
+	)
 	if err := os.RemoveAll("build"); err != nil {
 		return err
 	}
@@ -365,7 +431,9 @@ func Clean(ctx context.Context) error {
 		return err
 	}
 
-	fmt.Println("Done Cleaning")
+	slog.InfoContext(ctx,
+		"done cleaning",
+	)
 	return nil
 }
 
@@ -391,6 +459,10 @@ func Up(ctx context.Context) error {
 	}
 
 	if err := baseCmd.Clone().ReplaceArgs("up", "-d").Run(ctx); err != nil {
+		slog.ErrorContext(ctx,
+			"command failed",
+			"error", err,
+		)
 		return err
 	}
 
@@ -481,7 +553,9 @@ func Shell(ctx context.Context) error {
 			if err != nil {
 				return err
 			}
-			cleanup := f.Close
+			cleanup := func() {
+				f.Close()
+			}
 			defer func() {
 				if f := cleanup; f != nil {
 					cleanup = nil
@@ -562,6 +636,10 @@ func Logs(ctx context.Context) error {
 	}
 
 	if err := baseComposeCmd().ReplaceArgs(args...).Run(ctx); err != nil {
+		slog.ErrorContext(ctx,
+			"command failed",
+			"error", err,
+		)
 		return err
 	}
 
@@ -661,6 +739,10 @@ func installLinter(ctx context.Context) error {
 	}
 
 	if err := NewCmd(os.Getenv("GOLANGCILINT_BIN"), "version").Run(ctx); err != nil {
+		slog.ErrorContext(ctx,
+			"command failed",
+			"error", err,
+		)
 		return err
 	}
 
@@ -670,7 +752,11 @@ func installLinter(ctx context.Context) error {
 func Lint(ctx context.Context) error {
 	mg.Deps(installLinter)
 
-	if err := NewCmd(os.Getenv("GOLANGCILINT_BIN"), "run", "--skip-dirs", `^(vendor-ext)/.*`).Run(ctx); err != nil {
+	if err := NewCmd(os.Getenv("GOLANGCILINT_BIN"), "run", "--skip-dirs", `^(?:vendor-ext)/.*`).Run(ctx); err != nil {
+		slog.ErrorContext(ctx,
+			"command failed",
+			"error", err,
+		)
 		return err
 	}
 
