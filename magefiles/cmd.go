@@ -6,10 +6,9 @@ package main
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"os/exec"
 	"strings"
@@ -191,22 +190,24 @@ func (c *Cmd) Run(ctx context.Context) error {
 	cmd.Env = env
 
 	if !c.echoDisabled {
-		fmt.Println("Running", cmd.String())
+		slog.InfoContext(ctx,
+			"running",
+			"cmd", cmd.String(),
+		)
 	}
 
 	if err := cmd.Run(); err != nil {
+		logArgs := []any{"error", err}
 		if c.bufOut != nil {
-			fmt.Print("Failed: stdout:")
-			enc := json.NewEncoder(os.Stdout)
-			enc.SetEscapeHTML(false)
-			enc.Encode(c.bufOut.String())
+			logArgs = append(logArgs, "stdout", c.bufOut.String())
 		}
 		if c.bufErr != nil {
-			fmt.Print("Failed: stderr:")
-			enc := json.NewEncoder(os.Stdout)
-			enc.SetEscapeHTML(false)
-			enc.Encode(c.bufErr.String())
+			logArgs = append(logArgs, "stderr", c.bufErr.String())
 		}
+		slog.ErrorContext(ctx,
+			"command failed",
+			logArgs...,
+		)
 		return err
 	}
 
@@ -249,9 +250,7 @@ func (c *Cmd) CaptureErr() *Cmd {
 	return c
 }
 
-// TODO: filter does not need to be struct method
-
-func (_ *Cmd) filter(s string, filters ...func(string) string) string {
+func applyStrFilters(s string, filters ...func(string) string) string {
 	for _, f := range filters {
 		s = f(s)
 	}
@@ -261,18 +260,18 @@ func (_ *Cmd) filter(s string, filters ...func(string) string) string {
 
 func (c *Cmd) OutString(filters ...func(string) string) string {
 	if buf := c.bufOut; buf != nil {
-		return c.filter(buf.String(), filters...)
+		return applyStrFilters(buf.String(), filters...)
 	}
 
-	return c.filter("", filters...)
+	return applyStrFilters("", filters...)
 }
 
 func (c *Cmd) ErrString(filters ...func(string) string) string {
 	if buf := c.bufErr; buf != nil {
-		return c.filter(buf.String(), filters...)
+		return applyStrFilters(buf.String(), filters...)
 	}
 
-	return c.filter("", filters...)
+	return applyStrFilters("", filters...)
 }
 
 func (c *Cmd) Stdin(r io.Reader) *Cmd {
