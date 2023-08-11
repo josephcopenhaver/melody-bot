@@ -509,6 +509,13 @@ issues:
       path: (?:_test|/(?:testing|mocks)/.*)\.go
       linters: [revive]
     # TODO: update toolchain to support new go1.21 generic builtin functions
+    # NOTE: this is symptom of the compiled tool not being built with the latest language spec
+    # which can and does gain builtins over time; ideally they would not hardcode the spec but perhaps
+    # resolve it in the current installed env should such an artifact be available.
+    #
+    # Likely just need to wait for new releases that have been built with 1.21 and all will be well.
+    #
+    # Even staticcheck has this concern.
     - text: "undefined:\\s*(?:min|max|clear)\\s*$"
       linters: [typecheck]
 
