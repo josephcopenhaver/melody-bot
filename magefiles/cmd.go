@@ -31,13 +31,17 @@ func NewCmd(cmdAndArgs ...string) *Cmd {
 		return &Cmd{}
 	}
 
-	cmdAndArgs[0] = strings.TrimSpace(cmdAndArgs[0])
-	if cmdAndArgs[0] == "" {
+	cmd := strings.TrimSpace(cmdAndArgs[0])
+	if cmd == "" {
 		panic(errors.New("first cmd argument cannot be an empty string"))
 	}
 
+	newCmdAndArgs := make([]string, 0, len(cmdAndArgs))
+	newCmdAndArgs = append(newCmdAndArgs, cmd)
+	newCmdAndArgs = append(newCmdAndArgs, cmdAndArgs[1:]...)
+
 	return &Cmd{
-		cmdAndArgs: cmdAndArgs,
+		cmdAndArgs: newCmdAndArgs,
 	}
 }
 
