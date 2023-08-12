@@ -230,7 +230,7 @@ func vars(ctx context.Context) {
 				return s, nil
 			}
 		}},
-		{"GOLANGCILINT_VERSION", "v1.53.3", nil},
+		{"GOLANGCILINT_VERSION", "v1.54.1", nil},
 		{"GOLANGCILINT_BIN", "", func(ctx context.Context) (string, error) {
 			return filepath.Join("magefiles/cache/golangci-lint", fmt.Sprintf("%s-%s-%s", strings.TrimLeft(os.Getenv("GOLANGCILINT_VERSION"), "v"), os.Getenv("OS"), os.Getenv("ARCH")), "golangci-lint"), nil
 		}},
@@ -711,7 +711,7 @@ func installLinter(ctx context.Context) error {
 		dstBinDir := filepath.Dir(dstBin)
 		verOsPlat := filepath.Base(dstBinDir)
 
-		// example url: https://github.com/golangci/golangci-lint/releases/download/v1.53.3/golangci-lint-1.53.3-freebsd-amd64.tar.gz
+		// example url: https://github.com/golangci/golangci-lint/releases/download/v1.54.1/golangci-lint-1.54.1-freebsd-amd64.tar.gz
 
 		fname := fmt.Sprintf("golangci-lint-%s.tar.gz", verOsPlat)
 		dstFile := filepath.Join(lintCacheDir, fname)
@@ -842,6 +842,10 @@ func Lint(ctx context.Context) error {
 	}
 
 	// TODO: upgrade to version of staticcheck built with go1.21 and uncomment
+	//
+	// min|max|clear builtins are not recognized and linters seem to embed parts of the compiler language model instead of
+	// referencing something that potentially exists in the installed version of go's language model
+	//
 	// if err := NewCmd(os.Getenv("STATICCHECK_BIN"), "-tags", "mage,unit,integration", "./...").Run(ctx); err != nil {
 	// 	slog.ErrorContext(ctx,
 	// 		"command failed",
