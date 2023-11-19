@@ -43,12 +43,19 @@ mage clean
 
 ## required bot permissions
 
-- View Channels
-- Send Messages
-- Send TTS Messages ( not used yet )
-- Embed Links ( not used yet )
-- Connect
-- Speak
+- General
+  - Read Messages/ViewChannels: To understand who is in which channels.
+- Text
+  - Send Messages: To send bot status and async task updates messages.
+  - Embed Links: To provide richer message context and content.
+  - Add Reactions: To inform the interacting users of their request's status.
+- Voice
+  - Connect: To control which channel the bot joins for playback.
+  - Speak: To playback audio track selections to users.
+- Result Bitmask: 3165248
+- Privileged Gateway Intents
+  - Server Members: To receive guild membership events such as people getting removed from the server and all the channels.
+  - Message Content: To ensure when people fully type a command and do not autocomplete the bot name prefix part of the command, the bot still can view the message contents.
 
 ## supported bot commands
 
