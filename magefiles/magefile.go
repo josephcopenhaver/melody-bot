@@ -230,9 +230,13 @@ func vars(ctx context.Context) {
 				return s, nil
 			}
 		}},
-		{"GOLANGCILINT_VERSION", "v1.53.3", nil},
+		{"GOLANGCILINT_VERSION", "v1.54.1", nil},
 		{"GOLANGCILINT_BIN", "", func(ctx context.Context) (string, error) {
 			return filepath.Join("magefiles/cache/golangci-lint", fmt.Sprintf("%s-%s-%s", strings.TrimLeft(os.Getenv("GOLANGCILINT_VERSION"), "v"), os.Getenv("OS"), os.Getenv("ARCH")), "golangci-lint"), nil
+		}},
+		{"STATICCHECK_VERSION", "2023.1.3", nil},
+		{"STATICCHECK_BIN", "", func(ctx context.Context) (string, error) {
+			return filepath.Join("magefiles/cache/staticcheck", fmt.Sprintf("%s-%s-%s", os.Getenv("STATICCHECK_VERSION"), os.Getenv("OS"), os.Getenv("ARCH")), "staticcheck"), nil
 		}},
 	}
 
@@ -241,13 +245,13 @@ func vars(ctx context.Context) {
 			if f := dv.Resolver; f != nil {
 				dv.Resolver = nil
 				if v, err := f(ctx); err != nil {
-					panic(fmt.Errorf("Failed to resolve value for %s: %w", dv.Name, err))
+					panic(fmt.Errorf("failed to resolve env value for %s: %w", dv.Name, err))
 				} else {
 					dv.Default = v
 				}
 			}
 			if err := os.Setenv(dv.Name, dv.Default); err != nil {
-				panic(fmt.Errorf("Failed to set default value for %s to '%s': %w", dv.Name, dv.Default, err))
+				panic(fmt.Errorf("failed to set default value for %s to '%s': %w", dv.Name, dv.Default, err))
 			}
 		}
 	}
@@ -619,7 +623,6 @@ func Shell(ctx context.Context) error {
 		Args("-v", filepath.Join(homeDir, ".aws")+":/root/.aws:ro").
 		Args("-v", filepath.Join(homeDir, ".aws/cli/cache")+":/root/.aws/cli/cache:rw").
 		Args("-v", filepath.Join(homeDir, ".ssh")+":/root/.ssh:ro").
-		Args("-v", filepath.Join(cwd, ".devcontainer/cache/go")+":/go").
 		Args("-v", filepath.Join(cwd, ".devcontainer/cache/bashrc.local")+":/root/.bashrc.local").
 		Args("-v", filepath.Join(cwd, ".devcontainer/cache/bash_history")+":/root/.bash_history").
 		Fields("--entrypoint bash").
@@ -690,60 +693,138 @@ func Test(ctx context.Context) error {
 		AppendEnv(composeFile).Run(ctx)
 }
 
+//nolint:gocyclo
 func installLinter(ctx context.Context) error {
 
 	mg.Deps(vars)
 
-	const lintCacheDir = "./magefiles/cache/golangci-lint"
-	if err := os.MkdirAll(lintCacheDir, 0775); err != nil {
-		return err
-	}
+	const rootCacheDir = "./magefiles/cache"
 
-	dstBin := os.Getenv("GOLANGCILINT_BIN")
-	dstBinDir := filepath.Dir(dstBin)
-	verOsPlat := filepath.Base(dstBinDir)
+	// install golangci-lint
+	{
+		lintCacheDir := filepath.Join(rootCacheDir, "golangci-lint")
+		if err := os.MkdirAll(lintCacheDir, 0775); err != nil {
+			return err
+		}
 
-	// example url: https://github.com/golangci/golangci-lint/releases/download/v1.53.3/golangci-lint-1.53.3-freebsd-amd64.tar.gz
+		dstBin := os.Getenv("GOLANGCILINT_BIN")
+		dstBinDir := filepath.Dir(dstBin)
+		verOsPlat := filepath.Base(dstBinDir)
 
-	fname := fmt.Sprintf("golangci-lint-%s.tar.gz", verOsPlat)
-	dstFile := filepath.Join(lintCacheDir, fname)
-	if !fileObjExists(dstFile) {
-		if fileObjExists(dstFile + ".tmp") {
-			if err := os.Remove(dstFile + ".tmp"); err != nil {
+		// example url: https://github.com/golangci/golangci-lint/releases/download/v1.54.1/golangci-lint-1.54.1-freebsd-amd64.tar.gz
+
+		fname := fmt.Sprintf("golangci-lint-%s.tar.gz", verOsPlat)
+		dstFile := filepath.Join(lintCacheDir, fname)
+		if !fileObjExists(dstFile) {
+			if fileObjExists(dstFile + ".tmp") {
+				if err := os.Remove(dstFile + ".tmp"); err != nil {
+					return err
+				}
+			}
+
+			url := fmt.Sprintf("https://github.com/golangci/golangci-lint/releases/download/v%s/%s", strings.TrimLeft(os.Getenv("GOLANGCILINT_VERSION"), "v"), fname)
+			if err := NewCmd("curl", "-fsSL", url, "-o", dstFile+".tmp").Run(ctx); err != nil {
+				return err
+			}
+
+			if err := os.Rename(dstFile+".tmp", dstFile); err != nil {
 				return err
 			}
 		}
 
-		url := fmt.Sprintf("https://github.com/golangci/golangci-lint/releases/download/v%s/%s", strings.TrimLeft(os.Getenv("GOLANGCILINT_VERSION"), "v"), fname)
-		if err := NewCmd("curl", "-fsSL", url, "-o", dstFile+".tmp").Run(ctx); err != nil {
-			return err
+		if !fileObjExists(dstBin) {
+			decompressedDir := filepath.Join(filepath.Dir(dstBinDir), "golangci-lint-"+filepath.Base(dstBinDir))
+
+			if dirExists(decompressedDir) {
+				if err := os.RemoveAll(decompressedDir); err != nil {
+					return err
+				}
+			}
+
+			if err := NewCmd("tar", "-xf", dstFile, "-C", lintCacheDir).Run(ctx); err != nil {
+				return err
+			}
+
+			if err := os.Rename(decompressedDir, dstBinDir); err != nil {
+				return err
+			}
+
+			if err := os.Remove(dstFile); err != nil {
+				return err
+			}
 		}
 
-		if err := os.Rename(dstFile+".tmp", dstFile); err != nil {
+		if err := NewCmd(os.Getenv("GOLANGCILINT_BIN"), "version").Run(ctx); err != nil {
+			slog.ErrorContext(ctx,
+				"command failed",
+				"error", err,
+			)
 			return err
 		}
 	}
 
-	if !fileObjExists(dstBin) {
-		if err := NewCmd("tar", "-xf", dstFile, "-C", lintCacheDir).Run(ctx); err != nil {
+	// install staticcheck
+	//
+	// example url: https://github.com/dominikh/go-tools/releases/download/2023.1.3/staticcheck_darwin_arm64.tar.gz
+	{
+
+		lintCacheDir := filepath.Join(rootCacheDir, "staticcheck")
+		if err := os.MkdirAll(lintCacheDir, 0775); err != nil {
 			return err
 		}
 
-		if err := os.Rename(filepath.Join(filepath.Dir(dstBinDir), "golangci-lint-"+filepath.Base(dstBinDir)), dstBinDir); err != nil {
-			return err
+		dstBin := os.Getenv("STATICCHECK_BIN")
+		dstBinDir := filepath.Dir(dstBin)
+		verOsPlat := filepath.Base(dstBinDir)
+
+		fname := fmt.Sprintf(verOsPlat + ".tar.gz")
+		dstFile := filepath.Join(lintCacheDir, fname)
+		if !fileObjExists(dstFile) {
+			if fileObjExists(dstFile + ".tmp") {
+				if err := os.Remove(dstFile + ".tmp"); err != nil {
+					return err
+				}
+			}
+
+			url := fmt.Sprintf("https://github.com/dominikh/go-tools/releases/download/%s/staticcheck_%s_%s.tar.gz", os.Getenv("STATICCHECK_VERSION"), os.Getenv("OS"), os.Getenv("ARCH"))
+			if err := NewCmd("curl", "-fsSL", url, "-o", dstFile+".tmp").Run(ctx); err != nil {
+				return err
+			}
+
+			if err := os.Rename(dstFile+".tmp", dstFile); err != nil {
+				return err
+			}
 		}
 
-		if err := os.Remove(dstFile); err != nil {
+		if !fileObjExists(dstBin) {
+			decompressedDir := filepath.Join(filepath.Dir(dstBinDir), "staticcheck")
+
+			if dirExists(decompressedDir) {
+				if err := os.RemoveAll(decompressedDir); err != nil {
+					return err
+				}
+			}
+
+			if err := NewCmd("tar", "-xf", dstFile, "-C", lintCacheDir).Run(ctx); err != nil {
+				return err
+			}
+
+			if err := os.Rename(decompressedDir, dstBinDir); err != nil {
+				return err
+			}
+
+			if err := os.Remove(dstFile); err != nil {
+				return err
+			}
+		}
+
+		if err := NewCmd(os.Getenv("STATICCHECK_BIN"), "-version").Run(ctx); err != nil {
+			slog.ErrorContext(ctx,
+				"command failed",
+				"error", err,
+			)
 			return err
 		}
-	}
-
-	if err := NewCmd(os.Getenv("GOLANGCILINT_BIN"), "version").Run(ctx); err != nil {
-		slog.ErrorContext(ctx,
-			"command failed",
-			"error", err,
-		)
-		return err
 	}
 
 	return nil
@@ -759,6 +840,19 @@ func Lint(ctx context.Context) error {
 		)
 		return err
 	}
+
+	// TODO: upgrade to version of staticcheck built with go1.21 and uncomment
+	//
+	// min|max|clear builtins are not recognized and linters seem to embed parts of the compiler language model instead of
+	// referencing something that potentially exists in the installed version of go's language model
+	//
+	// if err := NewCmd(os.Getenv("STATICCHECK_BIN"), "-tags", "mage,unit,integration", "./...").Run(ctx); err != nil {
+	// 	slog.ErrorContext(ctx,
+	// 		"command failed",
+	// 		"error", err,
+	// 	)
+	// 	return err
+	// }
 
 	return nil
 }
