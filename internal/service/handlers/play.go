@@ -480,7 +480,7 @@ func (as *audioStream) ReadCloser(ctx context.Context, wg *sync.WaitGroup) (io.R
 
 		f, s, err := as.getStream(ctx, as.Video, as.Format)
 		if err != nil {
-			setErr(err)
+			setErr(fmt.Errorf("failed to get stream: %w", err))
 			return
 		}
 		defer func() {
@@ -499,17 +499,17 @@ func (as *audioStream) ReadCloser(ctx context.Context, wg *sync.WaitGroup) (io.R
 			as.Format = nil
 
 			if err := vidMetadataCache.Delete(as.srcVideoUrlStr); err != nil {
-				setErr(err)
+				setErr(fmt.Errorf("failed to delete from metadata cache: %w", err))
 				return
 			}
 
 			if err := as.SelectDownloadURL(ctx); err != nil {
-				setErr(err)
+				setErr(fmt.Errorf("failed to select download url: %w", err))
 				return
 			}
 			f, s, err = as.getStream(ctx, as.Video, as.Format)
 			if err != nil {
-				setErr(err)
+				setErr(fmt.Errorf("failed to get stream a second time: %w", err))
 				return
 			}
 			if s == 0 {

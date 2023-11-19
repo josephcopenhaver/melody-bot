@@ -186,6 +186,19 @@ func (s *Server) addMuxHandlers(ctx context.Context) {
 			return
 		}
 
+		slog.Debug(
+			"new message in guild channel",
+			"guild_id", m.GuildID,
+			"channel_id", m.ChannelID,
+			"message_id", m.Message.ID,
+			"message_timestamp", m.Timestamp,
+			"author_id", m.Author.ID,
+			"author_username", m.Author.Username,
+			"author_discriminator", m.Author.Discriminator,
+			"author_email", m.Author.Email,
+			"message_content", m.Message.Content,
+		)
+
 		trimMsg := strings.TrimSpace(m.Message.Content)
 
 		if m.GuildID != "" {
@@ -304,6 +317,7 @@ func (s *Server) addMuxHandlers(ctx context.Context) {
 				"message_timestamp", m.Timestamp,
 				"author_id", m.Author.ID,
 				"author_username", m.Author.Username,
+				"author_discriminator", m.Author.Discriminator,
 			)
 
 			if m.EditedTimestamp != nil {
