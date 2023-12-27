@@ -60,9 +60,11 @@ func init() {
 //
 
 func version(ctx context.Context) string {
-	cmd := NewCmd().
-		Fields("head -1 version.txt").
-		CaptureOut()
+	op := NewCmdOpts()
+	cmd := NewCmd(
+		op.Fields("head -1 version.txt"),
+		op.CaptureOut(true),
+	)
 	if err := cmd.Run(ctx); err != nil {
 		panic(err)
 	}
@@ -146,7 +148,7 @@ func (fss *fileSigsSet) Validate(ctx context.Context) error {
 	return nil
 }
 
-func baseComposeCmd() *Cmd {
+func baseCmdOptions() []NewCmdOption {
 
 	cwd := os.Getenv("PWD")
 	if cwd == "" {
@@ -179,8 +181,11 @@ func baseComposeCmd() *Cmd {
 		}
 	}
 
-	return NewCmd("docker-compose").
-		AppendEnv("COMPOSE_FILE=" + sb.String())
+	op := NewCmdOpts()
+	return []NewCmdOption{
+		op.Arg("docker-compose"),
+		op.AppendEnv("COMPOSE_FILE=" + sb.String()),
+	}
 }
 
 func vars(ctx context.Context) {
@@ -207,7 +212,11 @@ func vars(ctx context.Context) {
 		{"COMPOSE_IGNORE_ORPHANS", "false", nil},
 		{"PWD", pwd, nil},
 		{"OS", "", func(ctx context.Context) (string, error) {
-			cmd := NewCmd("uname", "-s").CaptureOut()
+			op := NewCmdOpts()
+			cmd := NewCmd(
+				op.Args("uname", "-s"),
+				op.CaptureOut(true),
+			)
 			if err := cmd.Run(ctx); err != nil {
 				return "", err
 			}
@@ -215,7 +224,11 @@ func vars(ctx context.Context) {
 			return cmd.OutString(strings.TrimSpace, strings.ToLower), nil
 		}},
 		{"ARCH", "", func(ctx context.Context) (string, error) {
-			cmd := NewCmd("uname", "-m").CaptureOut()
+			op := NewCmdOpts()
+			cmd := NewCmd(
+				op.Args("uname", "-m"),
+				op.CaptureOut(true),
+			)
 			if err := cmd.Run(ctx); err != nil {
 				return "", err
 			}
@@ -283,7 +296,11 @@ func down(ctx context.Context, removeVolumes bool) error {
 		composeArgs = composeArgs[:len(composeArgs)-1]
 	}
 
-	if err := baseComposeCmd().ReplaceArgs(composeArgs...).Run(ctx); err != nil {
+	cmd := NewCmd(append(
+		baseCmdOptions(),
+		NewCmdOpts().ReplaceArgs(composeArgs...),
+	)...)
+	if err := cmd.Run(ctx); err != nil {
 		slog.ErrorContext(ctx,
 			"command failed",
 			"error", err,
@@ -315,12 +332,16 @@ func Build(ctx context.Context) error {
 	slog.InfoContext(ctx,
 		"building",
 	)
-	if err := NewCmd().Fields("mkdir -p build/bin").Run(ctx); err != nil {
+	if err := NewCmd(NewCmdOpts().Fields("mkdir -p build/bin")).Run(ctx); err != nil {
 		return err
 	}
 
 	// verify the version of mage being used matches everywhere
-	cmd := NewCmd("bash", "-c", `set -euxo pipefail && go list -m github.com/magefile/mage | head -1 | sed -E 's/^.*\s+([^\s]+)\s*$/\1/'`).CaptureOut()
+	op := NewCmdOpts()
+	cmd := NewCmd(
+		op.Args("bash", "-c", `set -euxo pipefail && go list -m github.com/magefile/mage | head -1 | sed -E 's/^.*\s+([^\s]+)\s*$/\1/'`),
+		op.CaptureOut(true),
+	)
 	if err := cmd.Run(ctx); err != nil {
 		return err
 	}
@@ -329,15 +350,16 @@ func Build(ctx context.Context) error {
 		return errors.New("failed to verify mage version is set consistently")
 	}
 
-	cmd = NewCmd().
-		Fields("go build -o build/bin -tags netgo -ldflags").
-		Arg("-linkmode=external -extldflags=-static -X main.GitSHA=" + commitSha(ctx, "") + " -X main.Version=" + version(ctx)).
-		Arg("./cmd/...").
-		AppendEnvMap(map[string]string{
+	cmd = NewCmd(
+		op.Fields("go build -o build/bin -tags netgo -ldflags"),
+		op.Arg("-linkmode=external -extldflags=-static -X main.GitSHA="+commitSha(ctx, "")+" -X main.Version="+version(ctx)),
+		op.Arg("./cmd/..."),
+		op.AppendEnvMap(map[string]string{
 			"GOEXPERIMENT": "loopvar", // temp until standard in go1.22+ https://github.com/golang/go/wiki/LoopvarExperiment
 			"CGO_CFLAGS":   "-O3",
 			"CGO_ENABLED":  "1",
-		})
+		}),
+	)
 	if err := cmd.Run(ctx); err != nil {
 		return err
 	}
@@ -362,7 +384,7 @@ func InstallDeps(ctx context.Context) error {
 		return err
 	}
 
-	cmd := NewCmd("go", "mod", "vendor")
+	cmd := NewCmd(NewCmdOpts().Args("go", "mod", "vendor"))
 	if err := cmd.Run(ctx); err != nil {
 		return err
 	}
@@ -380,7 +402,7 @@ func InstallDeps(ctx context.Context) error {
 			}
 
 			// install git repo using a specific commit only
-			if err := NewCmd("bash", "-c", "set -euxo pipefail && mkdir -p vendor-ext/github.com/josephcopenhaver/gopus && cd vendor-ext/github.com/josephcopenhaver/gopus && git init && git remote add origin https://github.com/josephcopenhaver/gopus.git && git fetch origin "+JpcopeOpusVersion+" && git reset --hard FETCH_HEAD").Run(ctx); err != nil {
+			if err := NewCmd(NewCmdOpts().Args("bash", "-c", "set -euxo pipefail && mkdir -p vendor-ext/github.com/josephcopenhaver/gopus && cd vendor-ext/github.com/josephcopenhaver/gopus && git init && git remote add origin https://github.com/josephcopenhaver/gopus.git && git fetch origin "+JpcopeOpusVersion+" && git reset --hard FETCH_HEAD")).Run(ctx); err != nil {
 				return err
 			}
 		}
@@ -390,7 +412,7 @@ func InstallDeps(ctx context.Context) error {
 			"dst", "vendor-ext/github.com/josephcopenhaver/gopus",
 		)
 
-		if err := NewCmd("rsync", "-a", "--delete", "vendor-ext/github.com/josephcopenhaver/gopus/", "vendor/github.com/josephcopenhaver/gopus/").Run(ctx); err != nil {
+		if err := NewCmd(NewCmdOpts().Args("rsync", "-a", "--delete", "vendor-ext/github.com/josephcopenhaver/gopus/", "vendor/github.com/josephcopenhaver/gopus/")).Run(ctx); err != nil {
 			return err
 		}
 	}
@@ -450,15 +472,21 @@ func Up(ctx context.Context) error {
 		return err
 	}
 
-	baseCmd := baseComposeCmd()
-
 	if v, err := strconv.ParseBool(os.Getenv("NOBUILD")); err != nil || !v {
-		if err := baseCmd.Clone().ReplaceArgs("build").Run(ctx); err != nil {
+		cmd := NewCmd(append(
+			baseCmdOptions(),
+			NewCmdOpts().ReplaceArgs("build"),
+		)...)
+		if err := cmd.Run(ctx); err != nil {
 			return err
 		}
 	}
 
-	if err := baseCmd.Clone().ReplaceArgs("up", "-d").Run(ctx); err != nil {
+	cmd := NewCmd(append(
+		baseCmdOptions(),
+		NewCmdOpts().ReplaceArgs("up", "-d"),
+	)...)
+	if err := cmd.Run(ctx); err != nil {
 		slog.ErrorContext(ctx,
 			"command failed",
 			"error", err,
@@ -495,6 +523,7 @@ func BuildAllImages(ctx context.Context) error {
 	}
 
 	sc := bufio.NewScanner(f)
+	op := NewCmdOpts()
 	for sc.Scan() {
 		layer := strings.TrimSpace(sc.Text())
 		if layer == "" {
@@ -503,11 +532,12 @@ func BuildAllImages(ctx context.Context) error {
 
 		composeFile := filepath.Join(cwd, "docker", layer, "docker-compose.yml")
 
-		cmd := NewCmd().
-			Fields("docker-compose build").
-			AppendEnvMap(map[string]string{
+		cmd := NewCmd(
+			op.Fields("docker-compose build"),
+			op.AppendEnvMap(map[string]string{
 				"COMPOSE_FILE": strings.Join(append(append([]string(nil), baseComposeFiles...), composeFile), string(os.PathListSeparator)),
-			})
+			}),
+		)
 
 		if err := cmd.Run(ctx); err != nil {
 			return err
@@ -575,10 +605,18 @@ func Shell(ctx context.Context) error {
 	}
 
 	composeFile := shellComposeFileEnv(cwd)
-	baseCmd := NewCmd("docker-compose").AppendEnv(composeFile)
+	op := NewCmdOpts()
+	baseCmdOpts := []NewCmdOption{
+		op.Arg("docker-compose"),
+		op.AppendEnv(composeFile),
+	}
 
 	if v, err := strconv.ParseBool(os.Getenv("NOBUILD")); err != nil || !v {
-		if err := baseCmd.Clone().ReplaceArgs("build", "shell").Run(ctx); err != nil {
+		cmd := NewCmd(append(
+			baseCmdOpts,
+			op.ReplaceArgs("build", "shell"),
+		)...)
+		if err := cmd.Run(ctx); err != nil {
 			return err
 		}
 	}
@@ -586,7 +624,14 @@ func Shell(ctx context.Context) error {
 	// setting stdin is required to avoid "the input device is not a TTY" errors
 	//
 	// this command ensures that the networks are created, nothing more
-	if err := baseCmd.Clone().ReplaceArgs().Fields("run --rm --entrypoint bash shell -c").Arg("exit 0").Stdin(os.Stdin).Run(ctx); err != nil {
+	cmd := NewCmd(append(
+		baseCmdOpts,
+		op.ReplaceArgs(),
+		op.Fields("run --rm --entrypoint bash shell -c"),
+		op.Arg("exit 0"),
+		op.Stdin(os.Stdin),
+	)...)
+	if err := cmd.Run(ctx); err != nil {
 		return err
 	}
 
@@ -595,11 +640,17 @@ func Shell(ctx context.Context) error {
 		panic(errors.New("HOME not defined"))
 	}
 
-	if err := NewCmd().Fields("mkdir -p").Arg(filepath.Join(homeDir, ".aws/cli/cache")).Run(ctx); err != nil {
+	if err := NewCmd(
+		op.Fields("mkdir -p"),
+		op.Arg(filepath.Join(homeDir, ".aws/cli/cache")),
+	).Run(ctx); err != nil {
 		return err
 	}
 
-	if err := NewCmd().Fields("mkdir -p").Arg(filepath.Join(cwd, ".devcontainer/cache")).Run(ctx); err != nil {
+	if err := NewCmd(
+		op.Fields("mkdir -p"),
+		op.Arg(filepath.Join(cwd, ".devcontainer/cache")),
+	).Run(ctx); err != nil {
 		return err
 	}
 
@@ -607,24 +658,25 @@ func Shell(ctx context.Context) error {
 	if gitsha == "" {
 		gitsha = "latest"
 	}
-	return NewCmd().
-		Fields("docker run --rm -it").
-		Args("--network", network).
-		Args("--env-file", filepath.Join(cwd, ".devcontainer/env")).
-		Fields("-e AWS_ACCESS_KEY_ID -e AWS_SECRET_ACCESS_KEY -e AWS_DEFAULT_REGION -e AWS_REGION").
-		Fields("-e AWS_DEFAULT_OUTPUT -e AWS_PROFILE -e AWS_SDK_LOAD_CONFIG").
-		Fields("-e IN_DOCKER_CONTAINER=true").
-		Fields("-w /workspace").
-		Args("-v", cwd+":/workspace").
-		Args("-v", filepath.Join(homeDir, ".aws")+":/root/.aws:ro").
-		Args("-v", filepath.Join(homeDir, ".aws/cli/cache")+":/root/.aws/cli/cache:rw").
-		Args("-v", filepath.Join(homeDir, ".ssh")+":/root/.ssh:ro").
-		Args("-v", filepath.Join(cwd, ".devcontainer/cache/go")+":/go").
-		Args("-v", filepath.Join(cwd, ".devcontainer/cache/bashrc.local")+":/root/.bashrc.local").
-		Args("-v", filepath.Join(cwd, ".devcontainer/cache/bash_history")+":/root/.bash_history").
-		Fields("--entrypoint bash").
-		Arg("josephcopenhaver/melody-bot--shell:" + gitsha).
-		AppendEnv(composeFile).Exec()
+	return NewCmd(
+		op.Fields("docker run --rm -it"),
+		op.Args("--network", network),
+		op.Args("--env-file", filepath.Join(cwd, ".devcontainer/env")),
+		op.Fields("-e AWS_ACCESS_KEY_ID -e AWS_SECRET_ACCESS_KEY -e AWS_DEFAULT_REGION -e AWS_REGION"),
+		op.Fields("-e AWS_DEFAULT_OUTPUT -e AWS_PROFILE -e AWS_SDK_LOAD_CONFIG"),
+		op.Fields("-e IN_DOCKER_CONTAINER=true"),
+		op.Fields("-w /workspace"),
+		op.Args("-v", cwd+":/workspace"),
+		op.Args("-v", filepath.Join(homeDir, ".aws")+":/root/.aws:ro"),
+		op.Args("-v", filepath.Join(homeDir, ".aws/cli/cache")+":/root/.aws/cli/cache:rw"),
+		op.Args("-v", filepath.Join(homeDir, ".ssh")+":/root/.ssh:ro"),
+		op.Args("-v", filepath.Join(cwd, ".devcontainer/cache/go")+":/go"),
+		op.Args("-v", filepath.Join(cwd, ".devcontainer/cache/bashrc.local")+":/root/.bashrc.local"),
+		op.Args("-v", filepath.Join(cwd, ".devcontainer/cache/bash_history")+":/root/.bash_history"),
+		op.Fields("--entrypoint bash"),
+		op.Arg("josephcopenhaver/melody-bot--shell:"+gitsha),
+		op.AppendEnv(composeFile),
+	).Exec()
 }
 
 func Logs(ctx context.Context) error {
@@ -635,7 +687,11 @@ func Logs(ctx context.Context) error {
 		args = append(args, strings.Fields(strings.TrimSpace(s))...)
 	}
 
-	if err := baseComposeCmd().ReplaceArgs(args...).Run(ctx); err != nil {
+	cmd := NewCmd(append(
+		baseCmdOptions(),
+		NewCmdOpts().ReplaceArgs(args...),
+	)...)
+	if err := cmd.Run(ctx); err != nil {
 		slog.ErrorContext(ctx,
 			"command failed",
 			"error", err,
@@ -651,7 +707,11 @@ func Test(ctx context.Context) error {
 	const testCmd = `export GOEXPERIMENT='loopvar' && go test ./... && go test -race ./...`
 
 	if os.Getenv("IN_DOCKER_CONTAINER") != "" {
-		return NewCmd().Fields("bash -c").Arg(testCmd).Run(ctx)
+		op := NewCmdOpts()
+		return NewCmd(
+			op.Fields("bash -c"),
+			op.Arg(testCmd),
+		).Run(ctx)
 	}
 
 	mg.Deps(vars)
@@ -659,12 +719,20 @@ func Test(ctx context.Context) error {
 	cwd := os.Getenv("PWD")
 
 	composeFile := shellComposeFileEnv(cwd)
-	baseCmd := NewCmd("docker-compose").AppendEnv(composeFile)
+	op := NewCmdOpts()
 
 	// setting stdin is required to avoid "the input device is not a TTY" errors
 	//
 	// this command ensures that the networks are created, nothing more
-	if err := baseCmd.Clone().ReplaceArgs().Fields("run --rm --entrypoint bash shell -c").Arg("exit 0").Stdin(os.Stdin).Run(ctx); err != nil {
+	cmd := NewCmd(
+		op.Cmd("docker-compose"),
+		op.AppendEnv(composeFile),
+		op.ReplaceArgs(),
+		op.Fields("run --rm --entrypoint bash shell -c"),
+		op.Arg("exit 0"),
+		op.Stdin(os.Stdin),
+	)
+	if err := cmd.Run(ctx); err != nil {
 		return err
 	}
 
@@ -678,16 +746,17 @@ func Test(ctx context.Context) error {
 	if gitsha == "" {
 		gitsha = "latest"
 	}
-	return NewCmd().
-		Fields("docker run --rm").
-		Fields("-e IN_DOCKER_CONTAINER=true").
-		Fields("-w /workspace").
-		Args("-v", cwd+":/workspace").
-		Fields("--entrypoint bash").
-		Arg("josephcopenhaver/melody-bot--shell:" + gitsha).
-		Arg("-c").
-		Arg("mage test").
-		AppendEnv(composeFile).Run(ctx)
+	return NewCmd(
+		op.Fields("docker run --rm"),
+		op.Fields("-e IN_DOCKER_CONTAINER=true"),
+		op.Fields("-w /workspace"),
+		op.Args("-v", cwd+":/workspace"),
+		op.Fields("--entrypoint bash"),
+		op.Arg("josephcopenhaver/melody-bot--shell:"+gitsha),
+		op.Arg("-c"),
+		op.Arg("mage test"),
+		op.AppendEnv(composeFile),
+	).Run(ctx)
 }
 
 func installLinter(ctx context.Context) error {
@@ -715,7 +784,7 @@ func installLinter(ctx context.Context) error {
 		}
 
 		url := fmt.Sprintf("https://github.com/golangci/golangci-lint/releases/download/v%s/%s", strings.TrimLeft(os.Getenv("GOLANGCILINT_VERSION"), "v"), fname)
-		if err := NewCmd("curl", "-fsSL", url, "-o", dstFile+".tmp").Run(ctx); err != nil {
+		if err := NewCmd(NewCmdOpts().Args("curl", "-fsSL", url, "-o", dstFile+".tmp")).Run(ctx); err != nil {
 			return err
 		}
 
@@ -725,7 +794,7 @@ func installLinter(ctx context.Context) error {
 	}
 
 	if !fileObjExists(dstBin) {
-		if err := NewCmd("tar", "-xf", dstFile, "-C", lintCacheDir).Run(ctx); err != nil {
+		if err := NewCmd(NewCmdOpts().Args("tar", "-xf", dstFile, "-C", lintCacheDir)).Run(ctx); err != nil {
 			return err
 		}
 
@@ -738,7 +807,7 @@ func installLinter(ctx context.Context) error {
 		}
 	}
 
-	if err := NewCmd(os.Getenv("GOLANGCILINT_BIN"), "version").Run(ctx); err != nil {
+	if err := NewCmd(NewCmdOpts().Args(os.Getenv("GOLANGCILINT_BIN"), "version")).Run(ctx); err != nil {
 		slog.ErrorContext(ctx,
 			"command failed",
 			"error", err,
@@ -752,7 +821,7 @@ func installLinter(ctx context.Context) error {
 func Lint(ctx context.Context) error {
 	mg.Deps(installLinter)
 
-	if err := NewCmd(os.Getenv("GOLANGCILINT_BIN"), "run", "--skip-dirs", `^(?:vendor-ext)/.*`).Run(ctx); err != nil {
+	if err := NewCmd(NewCmdOpts().Args(os.Getenv("GOLANGCILINT_BIN"), "run", "--skip-dirs", `^(?:vendor-ext)/.*`)).Run(ctx); err != nil {
 		slog.ErrorContext(ctx,
 			"command failed",
 			"error", err,
