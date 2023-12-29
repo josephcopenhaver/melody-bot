@@ -26,64 +26,227 @@ type Cmd struct {
 	echoDisabled    bool
 }
 
-func NewCmd(cmdAndArgs ...string) *Cmd {
-	if len(cmdAndArgs) <= 0 {
-		return &Cmd{}
+type newCmdOpts struct{}
+
+func NewCmdOpts() newCmdOpts {
+	return newCmdOpts{}
+}
+
+type sharedCmdConfig struct {
+	envPre          []string
+	envPost         []string
+	cmdAndArgs      []string
+	stdin           io.Reader
+	dir             string
+	ignoreParentEnv bool
+	echoDisabled    bool
+}
+
+type newCmdConfig struct {
+	sharedCmdConfig
+	bufOut, bufErr bool
+}
+
+type NewCmdOption func(*newCmdConfig)
+
+func NewCmd(options ...NewCmdOption) *Cmd {
+	cfg := newCmdOpts{}.newCmdConfig(options...)
+
+	var bufOut, bufErr *bytes.Buffer
+
+	if cfg.bufOut {
+		bufOut = &bytes.Buffer{}
 	}
 
-	cmdAndArgs[0] = strings.TrimSpace(cmdAndArgs[0])
-	if cmdAndArgs[0] == "" {
-		panic(errors.New("first cmd argument cannot be an empty string"))
+	if cfg.bufErr {
+		bufErr = &bytes.Buffer{}
 	}
 
 	return &Cmd{
-		cmdAndArgs: cmdAndArgs,
+		envPre:          cfg.envPre,
+		envPost:         cfg.envPost,
+		cmdAndArgs:      cfg.cmdAndArgs,
+		stdin:           cfg.stdin,
+		dir:             cfg.dir,
+		ignoreParentEnv: cfg.ignoreParentEnv,
+		echoDisabled:    cfg.echoDisabled,
+		bufOut:          bufOut,
+		bufErr:          bufErr,
 	}
 }
 
-func (c *Cmd) Fields(s string) *Cmd {
-	return c.Args(strings.Fields(strings.TrimSpace(s))...)
-}
+func (newCmdOpts) newCmdConfig(options ...NewCmdOption) newCmdConfig {
+	cfg := newCmdConfig{}
 
-func (c *Cmd) Arg(s string) *Cmd {
-	return c.Args(s)
-}
-
-func (c *Cmd) Args(s ...string) *Cmd {
-	c.cmdAndArgs = append(c.cmdAndArgs, s...)
-
-	return c
-}
-
-func (c *Cmd) EchoDisabled(b bool) *Cmd {
-	c.echoDisabled = b
-
-	return c
-}
-
-func (c *Cmd) ReplaceArgs(s ...string) *Cmd {
-	if c.cmdAndArgs == nil {
-		panic(errors.New("no command specified: must specify a command before attempting to ReplaceArgs"))
+	for _, f := range options {
+		f(&cfg)
 	}
 
-	c.cmdAndArgs = append([]string{c.cmdAndArgs[0]}, s...)
-
-	return c
+	return cfg
 }
 
-func (c *Cmd) ReplaceCmdAndArgs(s ...string) *Cmd {
-	if len(s) <= 0 {
-		c.cmdAndArgs = nil
+func (newCmdOpts) Fields(s string) NewCmdOption {
+	return func(cfg *newCmdConfig) {
+		s = strings.TrimSpace(s)
+		if s == "" {
+			return
+		}
 
-		return c
+		cfg.sharedCmdConfig.args(strings.Fields(s)...)
 	}
+}
 
-	newList := make([]string, len(s))
-	copy(newList, s)
+func (newCmdOpts) Arg(s string) NewCmdOption {
+	return func(cfg *newCmdConfig) {
+		cfg.sharedCmdConfig.args(s)
+	}
+}
 
-	c.cmdAndArgs = newList
+func (newCmdOpts) Args(s ...string) NewCmdOption {
+	return func(cfg *newCmdConfig) {
+		if len(cfg.cmdAndArgs) == 0 {
+			var c []string
 
-	return c
+			if n := len(s); n > 0 {
+				c = make([]string, n)
+				copy(c, s)
+			}
+
+			cfg.cmdAndArgs = c
+			return
+		}
+
+		cfg.cmdAndArgs = append(cfg.cmdAndArgs, s...)
+	}
+}
+
+func (cfg *sharedCmdConfig) args(s ...string) {
+	if cfg.cmdAndArgs == nil {
+		cfg.cmdAndArgs = s
+		return
+	}
+	cfg.cmdAndArgs = append(cfg.cmdAndArgs, s...)
+}
+
+func (newCmdOpts) EchoDisabled(b bool) NewCmdOption {
+	return func(cfg *newCmdConfig) {
+		cfg.echoDisabled = b
+	}
+}
+
+func (newCmdOpts) ReplaceArgs(s ...string) NewCmdOption {
+	return func(cfg *newCmdConfig) {
+		cmd := cfg.cmdAndArgs[0]
+
+		if n := len(s); n > 0 {
+			c := make([]string, n+1)
+			c[0] = cmd
+			copy(c[1:], s)
+			cfg.cmdAndArgs = c
+			return
+		}
+
+		if len(cfg.cmdAndArgs) == 1 {
+			return
+		}
+
+		cfg.cmdAndArgs = []string{cmd}
+	}
+}
+
+func (newCmdOpts) ReplaceCmdAndArgs(s ...string) NewCmdOption {
+	return func(cfg *newCmdConfig) {
+		_ = s[0] // intentionally trigger a panic if arguments are bad
+
+		c := make([]string, len(s))
+		copy(c, s)
+
+		cfg.cmdAndArgs = c
+	}
+}
+
+func (newCmdOpts) Capture(b bool) NewCmdOption {
+	return func(cfg *newCmdConfig) {
+		cfg.bufOut = b
+		cfg.bufErr = b
+	}
+}
+
+func (newCmdOpts) CaptureOut(b bool) NewCmdOption {
+	return func(cfg *newCmdConfig) {
+		cfg.bufOut = b
+	}
+}
+
+func (newCmdOpts) CaptureErr(b bool) NewCmdOption {
+	return func(cfg *newCmdConfig) {
+		cfg.bufErr = b
+	}
+}
+
+func (newCmdOpts) Dir(s string) NewCmdOption {
+	return func(cfg *newCmdConfig) {
+		cfg.dir = s
+	}
+}
+
+func (newCmdOpts) Stdin(r io.Reader) NewCmdOption {
+	return func(cfg *newCmdConfig) {
+		cfg.stdin = r
+	}
+}
+
+func (newCmdOpts) IgnoreParentEnv(b bool) NewCmdOption {
+	return func(cfg *newCmdConfig) {
+		cfg.ignoreParentEnv = b
+	}
+}
+
+func (newCmdOpts) Cmd(s string) NewCmdOption {
+	return func(cfg *newCmdConfig) {
+		if len(cfg.cmdAndArgs) <= 1 {
+			cfg.cmdAndArgs = []string{s}
+			return
+		}
+
+		cfg.cmdAndArgs = append([]string{s}, cfg.cmdAndArgs[1:]...)
+	}
+}
+
+func (newCmdOpts) PrependEnvMap(m map[string]string) NewCmdOption {
+	return func(cfg *newCmdConfig) {
+		env := make([]string, 0, len(m))
+		for k, v := range m {
+			env = append(env, k+"="+v)
+		}
+
+		op := newCmdOpts{}.PrependEnv(env...)
+		op(cfg)
+	}
+}
+
+func (newCmdOpts) PrependEnv(s ...string) NewCmdOption {
+	return func(cfg *newCmdConfig) {
+		cfg.envPre = append(append(make([]string, 0, len(s)+len(cfg.envPre)), s...), cfg.envPre...)
+	}
+}
+
+func (newCmdOpts) AppendEnvMap(m map[string]string) NewCmdOption {
+	return func(cfg *newCmdConfig) {
+		env := make([]string, 0, len(m))
+		for k, v := range m {
+			env = append(env, k+"="+v)
+		}
+
+		op := newCmdOpts{}.AppendEnv(env...)
+		op(cfg)
+	}
+}
+
+func (newCmdOpts) AppendEnv(s ...string) NewCmdOption {
+	return func(cfg *newCmdConfig) {
+		cfg.envPost = append(append(make([]string, 0, len(cfg.envPost)+len(s)), cfg.envPost...), s...)
+	}
 }
 
 func (c *Cmd) Exec() error {
@@ -214,135 +377,26 @@ func (c *Cmd) Run(ctx context.Context) error {
 	return nil
 }
 
-func (c *Cmd) Dir(s string) *Cmd {
-	c.dir = s
-	return c
-}
-
-func (c *Cmd) Capture() *Cmd {
-
-	if c.bufOut == nil {
-		c.bufOut = &bytes.Buffer{}
-	}
-
-	return c
-}
-
-func (c *Cmd) CaptureOut() *Cmd {
-
-	if c.bufOut == nil {
-		c.bufOut = &bytes.Buffer{}
-	}
-
-	if c.bufErr == nil {
-		c.bufErr = &bytes.Buffer{}
-	}
-
-	return c
-}
-
-func (c *Cmd) CaptureErr() *Cmd {
-
-	if c.bufErr == nil {
-		c.bufErr = &bytes.Buffer{}
-	}
-
-	return c
-}
-
-func applyStrFilters(s string, filters ...func(string) string) string {
-	for _, f := range filters {
+func applyStrTranforms(s string, transforms ...func(string) string) string {
+	for _, f := range transforms {
 		s = f(s)
 	}
 
 	return s
 }
 
-func (c *Cmd) OutString(filters ...func(string) string) string {
+func (c *Cmd) OutString(transforms ...func(string) string) string {
 	if buf := c.bufOut; buf != nil {
-		return applyStrFilters(buf.String(), filters...)
+		return applyStrTranforms(buf.String(), transforms...)
 	}
 
-	return applyStrFilters("", filters...)
+	return applyStrTranforms("", transforms...)
 }
 
-func (c *Cmd) ErrString(filters ...func(string) string) string {
+func (c *Cmd) ErrString(transforms ...func(string) string) string {
 	if buf := c.bufErr; buf != nil {
-		return applyStrFilters(buf.String(), filters...)
+		return applyStrTranforms(buf.String(), transforms...)
 	}
 
-	return applyStrFilters("", filters...)
-}
-
-func (c *Cmd) Stdin(r io.Reader) *Cmd {
-
-	c.stdin = r
-
-	return c
-}
-
-func (c *Cmd) PrependEnvMap(m map[string]string) *Cmd {
-
-	env := make([]string, 0, len(m))
-	for k, v := range m {
-		env = append(env, k+"="+v)
-	}
-
-	return c.PrependEnv(env...)
-}
-
-func (c *Cmd) PrependEnv(s ...string) *Cmd {
-
-	c.envPre = append(append(make([]string, 0, len(s)+len(c.envPre)), s...), c.envPre...)
-
-	return c
-}
-
-func (c *Cmd) AppendEnvMap(m map[string]string) *Cmd {
-
-	env := make([]string, 0, len(m))
-	for k, v := range m {
-		env = append(env, k+"="+v)
-	}
-
-	return c.AppendEnv(env...)
-}
-
-func (c *Cmd) AppendEnv(s ...string) *Cmd {
-
-	c.envPost = append(append(make([]string, 0, len(c.envPost)+len(s)), c.envPost...), s...)
-
-	return c
-}
-
-func (c *Cmd) Clone() *Cmd {
-	cc := *c
-
-	if b := cc.bufOut; b != nil {
-		cc.bufOut = &bytes.Buffer{}
-	}
-
-	if b := cc.bufErr; b != nil {
-		cc.bufErr = &bytes.Buffer{}
-	}
-
-	if v := cc.envPre; v != nil {
-		env := make([]string, len(v))
-		copy(env, v)
-		cc.envPre = env
-	}
-
-	if v := cc.envPost; v != nil {
-		env := make([]string, len(v))
-		copy(env, v)
-		cc.envPost = env
-	}
-
-	if v := cc.cmdAndArgs; v != nil {
-		cmdAndArgs := make([]string, len(v))
-		copy(cmdAndArgs, v)
-		cc.cmdAndArgs = cmdAndArgs
-	}
-
-	return &cc
+	return applyStrTranforms("", transforms...)
 }
