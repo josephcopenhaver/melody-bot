@@ -18,6 +18,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/bwmarrin/discordgo"
@@ -839,15 +840,9 @@ func handlePlayRequest(ctx context.Context, s *discordgo.Session, m *discordgo.M
 		}
 	}
 
-	var closePlayPack func()
-	{
-		var oncer sync.Once
-		closePlayPack = func() {
-			oncer.Do(func() {
-				close(playPack)
-			})
-		}
-	}
+	closePlayPack := sync.OnceFunc(func() {
+		close(playPack)
+	})
 
 	// ensure the channel is absolutely always closed even if something panics
 	defer func() {
@@ -917,9 +912,13 @@ func processPlaylist(ctx context.Context, s *discordgo.Session, m *discordgo.Mes
 	{
 		var cancelCauseFunc context.CancelCauseFunc
 		ctx, cancelCauseFunc = context.WithCancelCause(ctx)
-		var oncer sync.Once
-		cancel = func(err error) {
-			oncer.Do(func() {
+		cancel = func() func(err error) {
+			onceBool := atomic.Bool{}
+			return func(err error) {
+				if onceBool.Swap(true) {
+					return
+				}
+
 				p.DeregisterCanceler(extCancel)
 
 				if cerr := ctx.Err(); cerr != nil {
@@ -927,8 +926,8 @@ func processPlaylist(ctx context.Context, s *discordgo.Session, m *discordgo.Mes
 				}
 
 				cancelCauseFunc(err)
-			})
-		}
+			}
+		}()
 		f := func(err error) {
 			defer wg.Wait()
 
