@@ -14,7 +14,7 @@ run:
   skip-files: []
   modules-download-mode: readonly
   allow-parallel-runners: false
-  go: "1.21"
+  go: "1.23"
 
 output:
   format: colored-line-number

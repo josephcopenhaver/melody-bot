@@ -104,14 +104,11 @@ func AddResolverToContext(ctx context.Context, f func() *slog.Logger) (context.C
 	v.f = f
 	v.logger = nil
 
-	var oncer sync.Once
-	return context.WithValue(ctx, loggerCtxKey{}, v), func() {
-		oncer.Do(func() {
-			v.f = nil
-			v.logger = nil
-			logResolverPool.Put(v)
-		})
-	}
+	return context.WithValue(ctx, loggerCtxKey{}, v), sync.OnceFunc(func() {
+		v.f = nil
+		v.logger = nil
+		logResolverPool.Put(v)
+	})
 }
 
 func Context(ctx context.Context) *slog.Logger {
