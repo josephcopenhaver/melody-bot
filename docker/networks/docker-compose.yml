@@ -1,5 +1,3 @@
-version: "3.7"
-
 networks:
   infrastructure:
     name: ${NETWORK_PREFIX_INFRASTRUCTURE}infrastructure
