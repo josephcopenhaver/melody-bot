@@ -653,6 +653,7 @@ func (c *DiskCache[K, V]) Delete(k K) error {
 	return nil
 }
 
+//nolint:gocritic // it's advising to refactor the loop and if blocks into a loop and switch statement - hard pass
 func (c *DiskCache[K, V]) prepForNewRecord() {
 	if c.size < c.maxSize {
 		c.size++
@@ -674,22 +675,26 @@ func (c *DiskCache[K, V]) prepForNewRecord() {
 	// TODO: refactor from O(n) to a more constant alg
 	for k, v := range c.m {
 
-		var swap bool
 		if valueToRemoveLastReadAtIsZero {
-			swap = (v.lastReadAt.IsZero() && v.createdAt.Before(valueToRemove.createdAt))
+			if v.lastReadAt.IsZero() && v.createdAt.Before(valueToRemove.createdAt) {
+				goto SWAP
+			}
+
+			continue
 		} else if v.lastReadAt.IsZero() {
-			swap = true
+			goto SWAP
 		} else if valueToRemove.lastReadAt.After(*v.lastReadAt) {
-			swap = true
+			goto SWAP
 		} else if !valueToRemove.lastReadAt.Before(*v.lastReadAt) && v.createdAt.Before(valueToRemove.createdAt) {
-			swap = true
+			goto SWAP
 		}
 
-		if swap {
-			keyToRemove = k
-			valueToRemove = v
-			valueToRemoveLastReadAtIsZero = v.lastReadAt.IsZero()
-		}
+		continue
+
+	SWAP:
+		keyToRemove = k
+		valueToRemove = v
+		valueToRemoveLastReadAtIsZero = v.lastReadAt.IsZero()
 	}
 
 	delete(c.m, keyToRemove)

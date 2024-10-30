@@ -1,5 +1,7 @@
 # https://github.com/golangci/golangci-lint/blob/v1.53.3/.golangci.reference.yml
 # and should only be used with v1.53.3 of golangci-lint
+#
+# TODO: update this doc for v1.61.0 of golangci-lint
 
 run:
   timeout: 5m
@@ -114,7 +116,7 @@ linters-settings:
       - elseif
       - nestingReduce
       - rangeExprCopy
-      - rangevalcopy
+      # - rangevalcopy
       - ruleguard
       - tooManyResultsChecker
       - truncateCmp
@@ -447,7 +449,7 @@ linters:
     - gocritic
     - gocyclo
     - godot
-    - goerr113
+    - err113
     - goheader
     - gomoddirectives
     - goprintffuncname
@@ -503,14 +505,22 @@ issues:
     - text: "Function `.*` should pass the context parameter"
       path: _test\.go
       linters: [contextcheck]
-    - text: "err113: do not define dynamic errors, use wrapped static errors instead:"
-      linters: [goerr113]
+    # TODO: err113 is a definite best practice in libs and fully tested products
+    - text: "do not define dynamic errors, use wrapped static errors instead:"
+      linters: [err113]
     - text: "context-as-argument: context.Context should be the first parameter of a function"
       path: (?:_test|/(?:testing|mocks)/.*)\.go
       linters: [revive]
     # TODO: update toolchain to support new go1.21 generic builtin functions
     - text: "undefined:\\s*(?:min|max|clear)\\s*$"
       linters: [typecheck]
+    # TODO: handlers have common signatures and only some params are used in various implementations, invalid for this repo
+    - text: "unused-parameter: parameter '"
+      linters: [revive]
+    # TODO: dot imports in test code is subjective as various frameworks have different conventions
+    - text: "dot-imports: should not use dot imports"
+      path: (?:_test|/(?:testing|mocks)/.*)\.go
+      linters: [revive]
 
 severity:
   default-severity: ""

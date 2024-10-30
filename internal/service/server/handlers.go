@@ -458,6 +458,6 @@ func (s *Server) AddHandler(v interface{}) {
 			msg,
 			"handler", v,
 		)
-		panic(errors.New("code-error: failed to register handler"))
+		panic("code-error: failed to register handler")
 	}
 }

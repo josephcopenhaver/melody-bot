@@ -152,7 +152,7 @@ func baseCmdOptions() []NewCmdOption {
 
 	cwd := os.Getenv("PWD")
 	if cwd == "" {
-		panic(errors.New("PWD not defined"))
+		panic("PWD not defined")
 	}
 
 	defaultLayers := []string{"networks", "default"}
@@ -183,7 +183,7 @@ func baseCmdOptions() []NewCmdOption {
 
 	op := NewCmdOpts()
 	return []NewCmdOption{
-		op.Arg("docker-compose"),
+		op.Fields("docker compose"),
 		op.AppendEnv("COMPOSE_FILE=" + sb.String()),
 	}
 }
@@ -243,8 +243,8 @@ func vars(ctx context.Context) {
 				return s, nil
 			}
 		}},
-		{"GOLANGCILINT_VERSION", "v1.53.3", nil},
-		{"GOLANGCILINT_BIN", "", func(ctx context.Context) (string, error) {
+		{"GOLANGCILINT_VERSION", "v1.61.0", nil},
+		{"GOLANGCILINT_BIN", "", func(_ context.Context) (string, error) {
 			return filepath.Join("magefiles/cache/golangci-lint", fmt.Sprintf("%s-%s-%s", strings.TrimLeft(os.Getenv("GOLANGCILINT_VERSION"), "v"), os.Getenv("OS"), os.Getenv("ARCH")), "golangci-lint"), nil
 		}},
 	}
@@ -253,11 +253,13 @@ func vars(ctx context.Context) {
 		if _, ok := os.LookupEnv(dv.Name); !ok {
 			if f := dv.Resolver; f != nil {
 				dv.Resolver = nil
-				if v, err := f(ctx); err != nil {
+
+				v, err := f(ctx)
+				if err != nil {
 					panic(fmt.Errorf("Failed to resolve value for %s: %w", dv.Name, err))
-				} else {
-					dv.Default = v
 				}
+
+				dv.Default = v
 			}
 			if err := os.Setenv(dv.Name, dv.Default); err != nil {
 				panic(fmt.Errorf("Failed to set default value for %s to '%s': %w", dv.Name, dv.Default, err))
@@ -287,7 +289,7 @@ func down(ctx context.Context, removeVolumes bool) error {
 	// bc down fails if there is an active shell... feature or bug?
 
 	composeArgs := []string{
-		"down", "",
+		"compose", "down", "",
 	}
 
 	if removeVolumes {
@@ -475,7 +477,7 @@ func Up(ctx context.Context) error {
 	if v, err := strconv.ParseBool(os.Getenv("NOBUILD")); err != nil || !v {
 		cmd := NewCmd(append(
 			baseCmdOptions(),
-			NewCmdOpts().ReplaceArgs("build"),
+			NewCmdOpts().ReplaceArgs("compose", "build"),
 		)...)
 		if err := cmd.Run(ctx); err != nil {
 			return err
@@ -484,7 +486,7 @@ func Up(ctx context.Context) error {
 
 	cmd := NewCmd(append(
 		baseCmdOptions(),
-		NewCmdOpts().ReplaceArgs("up", "-d"),
+		NewCmdOpts().ReplaceArgs("compose", "up", "-d"),
 	)...)
 	if err := cmd.Run(ctx); err != nil {
 		slog.ErrorContext(ctx,
@@ -506,9 +508,9 @@ func Down(ctx context.Context) error {
 func BuildAllImages(ctx context.Context) error {
 	mg.Deps(vars)
 
-	cwd, err := os.Getwd()
-	if err != nil {
-		return err
+	gitsha := os.Getenv("GIT_SHA")
+	if gitsha == "" {
+		gitsha = "latest"
 	}
 
 	// ensure deterministic image build order by referencing the layers build image order file
@@ -518,10 +520,6 @@ func BuildAllImages(ctx context.Context) error {
 	}
 	defer f.Close()
 
-	baseComposeFiles := []string{
-		filepath.Join(cwd, "docker/networks/docker-compose.yml"),
-	}
-
 	sc := bufio.NewScanner(f)
 	op := NewCmdOpts()
 	for sc.Scan() {
@@ -530,13 +528,16 @@ func BuildAllImages(ctx context.Context) error {
 			continue
 		}
 
-		composeFile := filepath.Join(cwd, "docker", layer, "docker-compose.yml")
+		imageName := "josephcopenhaver/melody-bot"
+		dockerCtxDir := "."
+		if layer != "default" {
+			imageName += "--" + layer
+			dockerCtxDir = "docker/" + layer
+		}
 
 		cmd := NewCmd(
-			op.Fields("docker-compose build"),
-			op.AppendEnvMap(map[string]string{
-				"COMPOSE_FILE": strings.Join(append(append([]string(nil), baseComposeFiles...), composeFile), string(os.PathListSeparator)),
-			}),
+			op.Fields("docker build --platform=linux/amd64 -t"),
+			op.Args(imageName+":"+gitsha, "-f", "docker/"+layer+"/Dockerfile", dockerCtxDir),
 		)
 
 		if err := cmd.Run(ctx); err != nil {
@@ -607,14 +608,14 @@ func Shell(ctx context.Context) error {
 	composeFile := shellComposeFileEnv(cwd)
 	op := NewCmdOpts()
 	baseCmdOpts := []NewCmdOption{
-		op.Arg("docker-compose"),
+		op.Cmd("docker"),
 		op.AppendEnv(composeFile),
 	}
 
 	if v, err := strconv.ParseBool(os.Getenv("NOBUILD")); err != nil || !v {
 		cmd := NewCmd(append(
 			baseCmdOpts,
-			op.ReplaceArgs("build", "shell"),
+			op.ReplaceArgs("compose", "build", "shell"),
 		)...)
 		if err := cmd.Run(ctx); err != nil {
 			return err
@@ -627,7 +628,7 @@ func Shell(ctx context.Context) error {
 	cmd := NewCmd(append(
 		baseCmdOpts,
 		op.ReplaceArgs(),
-		op.Fields("run --rm --entrypoint bash shell -c"),
+		op.Fields("compose run --rm --entrypoint bash shell -c"),
 		op.Arg("exit 0"),
 		op.Stdin(os.Stdin),
 	)...)
@@ -637,7 +638,7 @@ func Shell(ctx context.Context) error {
 
 	homeDir := os.Getenv("HOME")
 	if homeDir == "" {
-		panic(errors.New("HOME not defined"))
+		panic("HOME not defined")
 	}
 
 	if err := NewCmd(
@@ -682,7 +683,7 @@ func Shell(ctx context.Context) error {
 func Logs(ctx context.Context) error {
 	mg.Deps(vars)
 
-	args := strings.Fields("logs -f")
+	args := strings.Fields("compose logs -f")
 	if s := os.Getenv("SERVICES"); s != "" {
 		args = append(args, strings.Fields(strings.TrimSpace(s))...)
 	}
@@ -725,10 +726,8 @@ func Test(ctx context.Context) error {
 	//
 	// this command ensures that the networks are created, nothing more
 	cmd := NewCmd(
-		op.Cmd("docker-compose"),
 		op.AppendEnv(composeFile),
-		op.ReplaceArgs(),
-		op.Fields("run --rm --entrypoint bash shell -c"),
+		op.Fields("docker compose run --rm --entrypoint bash shell -c"),
 		op.Arg("exit 0"),
 		op.Stdin(os.Stdin),
 	)

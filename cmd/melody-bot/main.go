@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -54,7 +53,7 @@ var Version string
 
 func panicLog(msg string, vargs ...any) {
 	slog.Error(msg, vargs...)
-	panic(errors.New(msg))
+	panic(msg)
 }
 
 //nolint:unparam

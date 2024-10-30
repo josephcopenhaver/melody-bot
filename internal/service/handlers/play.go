@@ -81,11 +81,12 @@ var vidMetadataCache *cache.DiskCache[string, MediaMetaCacheEntry]
 
 //nolint:gochecknoinits
 func init() {
-	if v, err := cache.NewDiskCache(MediaMetadataCacheDir, MediaMetadataCacheSize, vidMetadataCacheOptions...); err != nil {
+	v, err := cache.NewDiskCache(MediaMetadataCacheDir, MediaMetadataCacheSize, vidMetadataCacheOptions...)
+	if err != nil {
 		panic(err)
-	} else {
-		vidMetadataCache = v
 	}
+
+	vidMetadataCache = v
 }
 
 // TODO: handle voice channel reconnects forced by the server, specifically when forced into a channel where no one is present

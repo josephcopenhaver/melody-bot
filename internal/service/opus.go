@@ -2,7 +2,6 @@ package service
 
 import (
 	"encoding/binary"
-	"errors"
 )
 
 // transcoding constants
@@ -19,6 +18,6 @@ func init() {
 	// verify on startup SampleMaxBytes is correct
 
 	if BytesPerInt16 != binary.Size(int16(0))/binary.Size(byte(0)) {
-		panic(errors.New("BytesPerInt16 constant is wrong somehow"))
+		panic("BytesPerInt16 constant is wrong somehow")
 	}
 }
