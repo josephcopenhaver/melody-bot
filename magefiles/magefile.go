@@ -508,9 +508,9 @@ func Down(ctx context.Context) error {
 func BuildAllImages(ctx context.Context) error {
 	mg.Deps(vars)
 
-	gitsha := os.Getenv("GIT_SHA")
-	if gitsha == "" {
-		gitsha = "latest"
+	cwd, err := os.Getwd()
+	if err != nil {
+		return err
 	}
 
 	// ensure deterministic image build order by referencing the layers build image order file
@@ -520,6 +520,10 @@ func BuildAllImages(ctx context.Context) error {
 	}
 	defer f.Close()
 
+	baseComposeFiles := []string{
+		filepath.Join(cwd, "docker/networks/docker-compose.yml"),
+	}
+
 	sc := bufio.NewScanner(f)
 	op := NewCmdOpts()
 	for sc.Scan() {
@@ -528,16 +532,14 @@ func BuildAllImages(ctx context.Context) error {
 			continue
 		}
 
-		imageName := "josephcopenhaver/melody-bot"
-		dockerCtxDir := "."
-		if layer != "default" {
-			imageName += "--" + layer
-			dockerCtxDir = "docker/" + layer
-		}
+		composeFile := filepath.Join(cwd, "docker", layer, "docker-compose.yml")
 
 		cmd := NewCmd(
-			op.Fields("docker build --platform=linux/amd64 -t"),
-			op.Args(imageName+":"+gitsha, "-f", "docker/"+layer+"/Dockerfile", dockerCtxDir),
+			op.Fields("docker compose build"),
+			op.AppendEnvMap(map[string]string{
+				"COMPOSE_FILE":    strings.Join(append(append([]string(nil), baseComposeFiles...), composeFile), string(os.PathListSeparator)),
+				"DOCKER_PLATFORM": "linux/amd64",
+			}),
 		)
 
 		if err := cmd.Run(ctx); err != nil {

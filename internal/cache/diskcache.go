@@ -672,7 +672,7 @@ func (c *DiskCache[K, V]) prepForNewRecord() {
 		break
 	}
 
-	// TODO: refactor from O(n) to a more constant alg
+	// TODO: refactor from O(n) to a more constant time data structure and alg
 	for k, v := range c.m {
 
 		if valueToRemoveLastReadAtIsZero {
