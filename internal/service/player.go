@@ -528,7 +528,7 @@ func (p *Player) reset() {
 
 func (p *Player) restartTrack() {
 	p.withMemory(func(m *PlayerMemory) {
-		m.currentTrackIdx = m.currentTrackIdx - 1
+		m.currentTrackIdx--
 	})
 }
 
@@ -706,24 +706,21 @@ func (p *Player) GetPlaylist() Playlist {
 }
 
 func (p *Player) setDefaultTextChannel(_ Signal, v interface{}) {
+	e, ok := v.(*discordgo.MessageCreate)
+	if !ok || e == nil {
+		return
+	}
 
-	switch e := v.(type) {
-	case *discordgo.MessageCreate:
-		if e == nil {
-			return
+	var changed bool
+	p.withMemory(func(m *PlayerMemory) {
+		if m.textChannel == "" {
+			changed = true
+			m.textChannel = e.Message.ChannelID
 		}
+	})
 
-		var changed bool
-		p.withMemory(func(m *PlayerMemory) {
-			if m.textChannel == "" {
-				changed = true
-				m.textChannel = e.Message.ChannelID
-			}
-		})
-
-		if changed {
-			p.broadcastTextMessage("text channel is now this one")
-		}
+	if changed {
+		p.broadcastTextMessage("text channel is now this one")
 	}
 }
 

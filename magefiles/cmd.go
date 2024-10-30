@@ -28,6 +28,7 @@ type Cmd struct {
 
 type newCmdOpts struct{}
 
+//nolint:revive // return is not exported because it's not needed
 func NewCmdOpts() newCmdOpts {
 	return newCmdOpts{}
 }
