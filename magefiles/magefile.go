@@ -508,6 +508,18 @@ func Down(ctx context.Context) error {
 func BuildAllImages(ctx context.Context) error {
 	mg.Deps(vars)
 
+	// TODO: github docker compose version has a platform bug causes builds to attempt to pull from registries
+	// before building the image locally
+	//
+	// While this might be some cache improvement / enhancement, there is no syntax available to stop this prepull behavior.
+	//
+	// So for now, docker compose builds are out and are only used in local development.
+	//
+	// cwd, err := os.Getwd()
+	// if err != nil {
+	// 	return err
+	// }
+
 	gitsha := os.Getenv("GIT_SHA")
 	if gitsha == "" {
 		gitsha = "latest"
@@ -520,6 +532,11 @@ func BuildAllImages(ctx context.Context) error {
 	}
 	defer f.Close()
 
+	// TODO: github docker compose version has a platform bug
+	// baseComposeFiles := []string{
+	// 	filepath.Join(cwd, "docker/networks/docker-compose.yml"),
+	// }
+
 	sc := bufio.NewScanner(f)
 	op := NewCmdOpts()
 	for sc.Scan() {
@@ -527,6 +544,17 @@ func BuildAllImages(ctx context.Context) error {
 		if layer == "" {
 			continue
 		}
+
+		// TODO: github docker compose version has a platform bug
+		// composeFile := filepath.Join(cwd, "docker", layer, "docker-compose.yml")
+
+		// cmd := NewCmd(
+		// 	op.Fields("docker compose build"),
+		// 	op.AppendEnvMap(map[string]string{
+		// 		"COMPOSE_FILE":    strings.Join(append(append([]string(nil), baseComposeFiles...), composeFile), string(os.PathListSeparator)),
+		// 		"DOCKER_PLATFORM": "linux/amd64",
+		// 	}),
+		// )
 
 		imageName := "josephcopenhaver/melody-bot"
 		dockerCtxDir := "."
